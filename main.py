@@ -20,7 +20,12 @@ import io
 import traceback
 import threading
 from contextlib import asynccontextmanager
-import watcher
+# watcher はローカル専用（クラウドでは不要）
+try:
+    import watcher
+    HAS_WATCHER = True
+except ImportError:
+    HAS_WATCHER = False
 import re
 import csv
 import zipfile
@@ -54,9 +59,10 @@ models.Base.metadata.create_all(bind=database.engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # アプリ起動時にフォルダ監視を別スレッドで開始
-    watch_thread = threading.Thread(target=watcher.start_watching, daemon=True)
-    watch_thread.start()
+    # アプリ起動時にフォルダ監視を別スレッドで開始（ローカルのみ）
+    if HAS_WATCHER:
+        watch_thread = threading.Thread(target=watcher.start_watching, daemon=True)
+        watch_thread.start()
     yield
     # シャットダウン時の処理はここに追加
 
@@ -879,6 +885,8 @@ def generate_thunderbird_csv_response(card_ids: List[str], db: Session):
 
 @app.post("/manual-import/", response_model=dict)
 def manual_import(db: Session = Depends(database.get_db)):
+    if not HAS_WATCHER:
+        return {"message": "Manual import is not available on cloud.", "results": {}}
     results = watcher.process_all_pending()
     return {"message": f"Manual import completed.", "results": results}
 
