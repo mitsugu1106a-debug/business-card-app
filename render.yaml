@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: business-card-app
+    env: python
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: GEMINI_API_KEY
+        sync: false
+    # -------------------------------------------------------------
+    # 【重要】RenderでSQLiteやアップロード画像を扱う場合の設定
+    # Renderのファイルシステムは再起動やデプロイ毎にリセットされます。
+    # データを永続化するには有料プランの「Disk」機能が必要です。
+    # Diskを使う場合は以下のコメントアウトを外し、Pythonコード内で
+    # 保存先フォルダを `/data` に変更する必要があります。
+    # -------------------------------------------------------------
+    # disk:
+    #   name: data-disk
+    #   mountPath: /data
+    #   sizeGB: 1

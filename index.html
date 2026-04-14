@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="initial-scale=1, width=device-width" />
+  <title>名刺管理アプリ</title>
+
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons" />
+
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/@mui/material@5/umd/material-ui.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      background-color: #f4f7f6;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const {
+      ThemeProvider, createTheme, CssBaseline,
+      Container, Typography, Box, Paper, TextField, Button, Grid,
+      Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+      Dialog, DialogTitle, DialogContent, DialogActions, Snackbar, Alert,
+      Avatar, InputAdornment, CircularProgress, Backdrop, Checkbox, Tooltip, IconButton,
+      Chip, Divider, Tabs, Tab, Accordion, AccordionSummary, AccordionDetails,
+      Select, MenuItem, FormControl, InputLabel, Autocomplete
+    } = MaterialUI;
+
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    const API_BASE_URL = '/cards/';
+    const SERVER_BASE_URL = '';
+
+    const theme = createTheme({
+      palette: {
+        primary: { main: '#1976d2' },
+        background: { default: '#f4f7f6', paper: '#ffffff' },
+      },
+      typography: { fontFamily: 'Roboto, sans-serif' },
+    });
+
+    const FIELD_LABELS = {
+      name: '氏名', company_name: '会社名', department: '部署', title: '役職',
+      phone_number: '電話番号', email: 'メールアドレス', address: '住所',
+      exchange_date: '交換日', memo: 'メモ'
+    };
+
+    const App = () => {
+      const [cards, setCards] = useState([]);
+      const [formData, setFormData] = useState({
+        name: '', company_name: '', department: '', title: '',
+        phone_number: '', email: '', address: '', exchange_date: '', memo: ''
+      });
+      const [formTags, setFormTags] = useState([]);
+      const [availableTags, setAvailableTags] = useState([]);
+      const [imageFile, setImageFile] = useState(null);
+      const fileInputRef = useRef(null);
+
+      const [editMode, setEditMode] = useState(false);
+      const [editId, setEditId] = useState(null);
+      const [openDialog, setOpenDialog] = useState(false);
+      const [viewerOpen, setViewerOpen] = useState(false);
+      const [viewerCard, setViewerCard] = useState(null);
+      const [viewerTab, setViewerTab] = useState(0);
+      const [cardHistory, setCardHistory] = useState([]);
+      const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+      const [searchInput, setSearchInput] = useState('');
+      const [debouncedSearch, setDebouncedSearch] = useState('');
+      const [isAnalyzing, setIsAnalyzing] = useState(false);
+      const [isImporting, setIsImporting] = useState(false);
+      const [selectedIds, setSelectedIds] = useState([]);
+
+      // Pagination
+      const [currentPage, setCurrentPage] = useState(1);
+      const [totalPages, setTotalPages] = useState(1);
+      const [totalCount, setTotalCount] = useState(0);
+      const [perPage, setPerPage] = useState(50);
+
+      // View mode
+      const [viewMode, setViewMode] = useState('list');
+
+      // Duplicate scanner
+      const [dupDialogOpen, setDupDialogOpen] = useState(false);
+      const [dupGroups, setDupGroups] = useState([]);
+      const [isDupScanning, setIsDupScanning] = useState(false);
+
+      // Attachments info for viewer
+      const [uploadingAttachment, setUploadingAttachment] = useState(false);
+
+      const searchTimerRef = useRef(null);
+
+      // 電子名刺コンポーネント
+      const VirtualCardComponent = ({ card, size = 'small' }) => {
+        const isSmall = size === 'small';
+        const baseWidth = 360;
+        const baseHeight = 218;
+        const scale = isSmall ? 0.45 : 1;
+
+        return (
+          <Box sx={{ width: baseWidth * scale, height: baseHeight * scale, display: 'inline-block' }}>
+            <Box
+              sx={{
+                width: baseWidth, height: baseHeight,
+                backgroundColor: '#ffffff', border: '1px solid #cccccc', borderRadius: 0,
+                color: '#2a2a2a', p: 3, position: 'relative', display: 'flex', flexDirection: 'column',
+                boxShadow: isSmall ? '1px 2px 4px rgba(0,0,0,0.1)' : '2px 4px 12px rgba(0,0,0,0.15)',
+                overflow: 'hidden', cursor: isSmall ? 'pointer' : 'default',
+                transform: `scale(${scale})`, transformOrigin: 'top left',
+                fontFamily: '"Noto Serif JP", "Yu Mincho", "MS Mincho", serif',
+                '&:hover': isSmall ? { boxShadow: '2px 4px 8px rgba(0,0,0,0.2)' } : {}
+              }}
+              onClick={() => isSmall && openImageViewer(card)}
+            >
+              <Box sx={{ zIndex: 1, display: 'flex', flexDirection: 'column', mb: 2 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 'bold', fontSize: '1rem', color: '#111', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                  {card.company_name || '　'}
+                </Typography>
+              </Box>
+              <Box sx={{ zIndex: 1, textAlign: 'center', flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                {(card.department || card.title) && (
+                  <Typography variant="body2" sx={{ fontSize: '0.85rem', color: '#444', mb: 0.5 }}>
+                    {card.department || ''} {card.title || ''}
+                  </Typography>
+                )}
+                <Typography variant="h5" sx={{ fontWeight: 'bold', fontSize: '1.8rem', letterSpacing: 4, color: '#000', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                  {card.name || '名称未設定'}
+                </Typography>
+              </Box>
+              <Box sx={{ zIndex: 1, textAlign: 'left', mt: 'auto', display: 'flex', flexDirection: 'column', fontFamily: '"Noto Sans JP", "Yu Gothic", sans-serif' }}>
+                {card.address && <Typography variant="caption" sx={{ fontSize: '0.75rem', color: '#333', mb: 0.2, display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>〒 {card.address}</Typography>}
+                {card.phone_number && <Typography variant="caption" sx={{ fontSize: '0.75rem', color: '#555', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>TEL: {card.phone_number}</Typography>}
+                {card.email && <Typography variant="caption" sx={{ fontSize: '0.75rem', color: '#555', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>Email: {card.email}</Typography>}
+              </Box>
+            </Box>
+          </Box>
+        );
+      };
+
+      // Search debounce
+      const handleSearchChange = (e) => {
+        const value = e.target.value;
+        setSearchInput(value);
+        if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+        searchTimerRef.current = setTimeout(() => {
+          setDebouncedSearch(value);
+          setCurrentPage(1);
+        }, 400);
+      };
+
+      // Tags fetching
+      const fetchTags = async () => {
+        try {
+          const res = await axios.get(`${SERVER_BASE_URL}/tags/`);
+          setAvailableTags(res.data);
+        } catch (error) { console.error('Failed to fetch tags', error); }
+      };
+
+      useEffect(() => {
+        fetchTags();
+      }, []);
+
+      // Fetch cards with pagination
+      const fetchCards = async (page, search, pp) => {
+        try {
+          const res = await axios.get(API_BASE_URL, { params: { page, per_page: pp, search: search || '' } });
+          setCards(res.data.items);
+          setTotalPages(res.data.total_pages);
+          setTotalCount(res.data.total);
+          setCurrentPage(res.data.page);
+        } catch (error) {
+          showSnackbar('データの取得に失敗しました', 'error');
+        }
+      };
+
+      useEffect(() => {
+        const pp = viewMode !== 'list' ? 0 : perPage;
+        fetchCards(viewMode !== 'list' ? 1 : currentPage, debouncedSearch, pp);
+      }, [currentPage, debouncedSearch, viewMode, perPage]);
+
+      const handleInputChange = (e) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
+      };
+
+      const handleFileChange = async (e) => {
+        if (e.target.files && e.target.files[0]) {
+          const file = e.target.files[0];
+          setImageFile(file);
+          const ocrData = new FormData();
+          ocrData.append('image', file);
+          setIsAnalyzing(true);
+          try {
+            const res = await axios.post(`${SERVER_BASE_URL}/ocr/`, ocrData, { headers: { 'Content-Type': 'multipart/form-data' } });
+            const results = res.data.cards || [];
+            if (results.length > 1) {
+              showSnackbar(`複数の名刺(${results.length}枚)を検出しました。先頭のデータをフォームにセットします。`, 'info');
+            } else if (results.length === 1) {
+              showSnackbar('名刺の解析が完了し、情報を自動セットしました', 'success');
+            }
+            if (results.length > 0) {
+              const result = results[0];
+              setFormData(prev => ({
+                ...prev,
+                name: result.name || prev.name, company_name: result.company_name || prev.company_name,
+                department: result.department || prev.department, title: result.title || prev.title,
+                phone_number: result.phone_number || prev.phone_number, email: result.email || prev.email,
+                address: result.address || prev.address,
+                memo: result.memo ? (prev.memo ? prev.memo + '\n\n[自動抽出メモ]\n' + result.memo : result.memo) : prev.memo
+              }));
+            }
+          } catch (error) {
+            showSnackbar('名刺画像の自動解析に失敗しました。手動で入力してください。', 'warning');
+          } finally { setIsAnalyzing(false); }
+        }
+      };
+
+      const handleManualImport = async () => {
+        setIsImporting(true);
+        try {
+          const res = await axios.post(`${SERVER_BASE_URL}/manual-import/`);
+          const results = res.data.results;
+          if (results.processed > 0) {
+            showSnackbar(`${results.processed}件の名刺を手動インポートしました`, 'success');
+            fetchCards(currentPage, debouncedSearch, perPage);
+          } else if (results.failed > 0 || results.skipped > 0) {
+            showSnackbar(`インポート対象がありませんでした（スキップ: ${results.skipped}件, エラー: ${results.failed}件）`, 'warning');
+          } else {
+            showSnackbar('auto_importフォルダにインポート対象の画像がありませんでした', 'info');
+          }
+        } catch (error) { showSnackbar('手動インポートの実行に失敗しました', 'error'); }
+        finally { setIsImporting(false); }
+      };
+
+      const handleExportBackup = () => {
+        showSnackbar('バックアップZIPを作成しています...', 'info');
+        window.location.href = `${SERVER_BASE_URL}/export-backup/`;
+      };
+
+      const handleImportCsvClick = () => document.getElementById('csvFileInput').click();
+
+      const handleCsvFileChange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        setIsImporting(true);
+        const fd = new FormData();
+        fd.append('file', file);
+        try {
+          const res = await axios.post(`${SERVER_BASE_URL}/import-csv/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+          showSnackbar(res.data.message || 'データ統合が完了しました', 'success');
+          fetchCards(currentPage, debouncedSearch, perPage);
+        } catch (error) {
+          const detail = error.response && error.response.data ? error.response.data.detail : error.message;
+          showSnackbar(`CSV取り込みに失敗しました: ${detail}`, 'error');
+        } finally { setIsImporting(false); e.target.value = ''; }
+      };
+
+      const handleAsyncUploadClick = () => document.getElementById('asyncFileInput').click();
+
+      const handleAsyncFileChange = async (e) => {
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+        setIsImporting(true);
+        const fd = new FormData();
+        Array.from(files).forEach(f => fd.append('images', f));
+        try {
+          await axios.post(`${SERVER_BASE_URL}/upload-async/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+          showSnackbar('送信完了！AIが裏側で順次登録します。', 'success');
+        } catch (error) { showSnackbar('画像の送信に失敗しました', 'error'); }
+        finally { setIsImporting(false); e.target.value = ''; }
+      };
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        const submitData = new FormData();
+        Object.keys(formData).forEach(key => {
+          if (formData[key] !== null && formData[key] !== '') submitData.append(key, formData[key]);
+        });
+        submitData.append('tags', formTags.join(','));
+        if (imageFile) submitData.append('image', imageFile);
+        try {
+          if (editMode) {
+            await axios.put(`${API_BASE_URL}${editId}`, submitData, { headers: { 'Content-Type': 'multipart/form-data' } });
+            showSnackbar('名刺を更新しました', 'success');
+          } else {
+            await axios.post(API_BASE_URL, submitData, { headers: { 'Content-Type': 'multipart/form-data' } });
+            showSnackbar('名刺を登録しました', 'success');
+          }
+          fetchCards(currentPage, debouncedSearch, perPage);
+          handleCloseDialog();
+        } catch (error) { showSnackbar('保存に失敗しました', 'error'); }
+      };
+
+      const handleDelete = async (id) => {
+        if (!window.confirm('本当に削除しますか？')) return;
+        try {
+          await axios.delete(`${API_BASE_URL}${id}`);
+          showSnackbar('名刺を削除しました', 'success');
+          setSelectedIds(prev => prev.filter(sid => sid !== id));
+          fetchCards(currentPage, debouncedSearch, perPage);
+        } catch (error) { showSnackbar('削除に失敗しました', 'error'); }
+      };
+
+      const handleBulkDelete = async () => {
+        if (selectedIds.length === 0) return;
+        if (!window.confirm(`選択した ${selectedIds.length} 件の名刺を本当に削除しますか？`)) return;
+        try {
+          await axios.post(`${API_BASE_URL}bulk-delete`, { card_ids: selectedIds });
+          showSnackbar(`${selectedIds.length}件の名刺を削除しました`, 'success');
+          setSelectedIds([]);
+          fetchCards(currentPage, debouncedSearch, perPage);
+        } catch (error) { showSnackbar('複数名刺の削除に失敗しました', 'error'); }
+      };
+
+      const handleExportVcf = (charset = 'utf-8-sig', label = '標準') => {
+        if (selectedIds.length === 0) return;
+        showSnackbar(`連絡先ファイル(${label})をダウンロードしています...`, 'info');
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `${SERVER_BASE_URL}/export-vcard-form`;
+        const inputIds = document.createElement('input');
+        inputIds.type = 'hidden';
+        inputIds.name = 'card_ids';
+        inputIds.value = selectedIds.join(',');
+        form.appendChild(inputIds);
+        const inputCharset = document.createElement('input');
+        inputCharset.type = 'hidden';
+        inputCharset.name = 'charset';
+        inputCharset.value = charset;
+        form.appendChild(inputCharset);
+        document.body.appendChild(form);
+        form.submit();
+        setTimeout(() => document.body.removeChild(form), 1000);
+      };
+
+      const handleExportThunderbirdCsv = () => {
+        if (selectedIds.length === 0) return;
+        showSnackbar('Thunderbird用CSVをダウンロードしています...', 'info');
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `${SERVER_BASE_URL}/export-thunderbird-csv-form`;
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'card_ids';
+        input.value = selectedIds.join(',');
+        form.appendChild(input);
+        document.body.appendChild(form);
+        form.submit();
+        setTimeout(() => document.body.removeChild(form), 1000);
+      };
+
+      const handleExportCsvSelected = () => {
+        if (selectedIds.length === 0) return;
+        showSnackbar('選択した名刺のCSVをダウンロードしています...', 'info');
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `${SERVER_BASE_URL}/export-csv-form`;
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'card_ids';
+        input.value = selectedIds.join(',');
+        form.appendChild(input);
+        document.body.appendChild(form);
+        form.submit();
+        setTimeout(() => document.body.removeChild(form), 1000);
+      };
+
+      // Attachments info for viewer
+      const handleAttachFile = async (e) => {
+        const files = e.target.files;
+        if (!files || files.length === 0 || !viewerCard) return;
+        setUploadingAttachment(true);
+        try {
+          for (const f of Array.from(files)) {
+            const fd = new FormData();
+            fd.append('file', f);
+            await axios.post(`${API_BASE_URL}${viewerCard.id}/attachments`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+          }
+          const res = await axios.get(`${API_BASE_URL}${viewerCard.id}`);
+          setViewerCard(res.data);
+          fetchCards(currentPage, debouncedSearch, perPage);
+          showSnackbar('ファイルを添付しました', 'success');
+        } catch (err) {
+          showSnackbar('添付ファイルのアップロードに失敗しました', 'error');
+        } finally {
+          setUploadingAttachment(false);
+          e.target.value = ''; // reset file input
+        }
+      };
+
+      const handleDeleteAttachment = async (attId) => {
+        if (!window.confirm('この添付ファイルを削除しますか？')) return;
+        try {
+          await axios.delete(`${SERVER_BASE_URL}/attachments/${attId}`);
+          const res = await axios.get(`${API_BASE_URL}${viewerCard.id}`);
+          setViewerCard(res.data);
+          fetchCards(currentPage, debouncedSearch, perPage);
+          showSnackbar('削除しました', 'success');
+        } catch (err) {
+          showSnackbar('削除に失敗しました', 'error');
+        }
+      };
+
+      // Selection
+      const handleSelectAllClick = (event) => {
+        if (event.target.checked) { setSelectedIds(cards.map(c => c.id)); } else { setSelectedIds([]); }
+      };
+      const handleClickSelect = (event, id) => {
+        const idx = selectedIds.indexOf(id);
+        if (idx === -1) { setSelectedIds([...selectedIds, id]); }
+        else { setSelectedIds(selectedIds.filter(sid => sid !== id)); }
+      };
+      const isSelected = (id) => selectedIds.indexOf(id) !== -1;
+
+      // Dialogs
+      const openEditDialog = (card) => {
+        setFormData({
+          name: card.name, company_name: card.company_name,
+          department: card.department || '', title: card.title || '',
+          phone_number: card.phone_number || '', email: card.email || '',
+          address: card.address || '', exchange_date: card.exchange_date || '', memo: card.memo || ''
+        });
+        setFormTags(card.tags ? card.tags.map(t => t.name) : []);
+        setImageFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        setEditMode(true); setEditId(card.id); setOpenDialog(true);
+      };
+
+      const handleOpenCreateDialog = () => {
+        setFormData({ name: '', company_name: '', department: '', title: '', phone_number: '', email: '', address: '', exchange_date: '', memo: '' });
+        setFormTags([]);
+        setImageFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        setEditMode(false); setEditId(null); setOpenDialog(true);
+      };
+      const handleCloseDialog = () => setOpenDialog(false);
+
+      const openImageViewer = async (card) => {
+        if (!card) return;
+        setViewerCard(card); setViewerTab(0); setViewerOpen(true);
+        try {
+          const res = await axios.get(`${API_BASE_URL}${card.id}/history`);
+          setCardHistory(res.data);
+        } catch { setCardHistory([]); }
+      };
+      const closeImageViewer = () => setViewerOpen(false);
+
+      const showSnackbar = (message, severity) => setSnackbar({ open: true, message, severity });
+      const handleCloseSnackbar = () => setSnackbar(prev => ({ ...prev, open: false }));
+
+      // Duplicate scanner
+      const handleDuplicateScan = async () => {
+        setDupDialogOpen(true); setIsDupScanning(true);
+        try {
+          const res = await axios.get(`${API_BASE_URL}duplicates/`);
+          setDupGroups(res.data.duplicate_groups);
+          if (res.data.total_groups === 0) showSnackbar('重複は見つかりませんでした', 'success');
+        } catch (error) { showSnackbar('重複スキャンに失敗しました', 'error'); }
+        finally { setIsDupScanning(false); }
+      };
+
+      // 重複ダイアログ専用ハンドラー（window.confirmはダイアログの裏に隠れるため使用しない）
+      const handleMergeInDialog = async (primaryId, secondaryId) => {
+        try {
+          await axios.post(`${API_BASE_URL}merge/`, { primary_card_id: primaryId, secondary_card_id: secondaryId });
+          showSnackbar('名刺を統合しました！古いデータは変更履歴に保存されています', 'success');
+          const res = await axios.get(`${API_BASE_URL}duplicates/`);
+          setDupGroups(res.data.duplicate_groups);
+          const pp = viewMode !== 'list' ? 0 : perPage;
+          fetchCards(currentPage, debouncedSearch, pp);
+        } catch (error) { showSnackbar('統合に失敗しました', 'error'); }
+      };
+
+      const handleDeleteInDialog = async (id) => {
+        try {
+          await axios.delete(`${API_BASE_URL}${id}`);
+          showSnackbar('名刺を削除しました', 'success');
+          const res = await axios.get(`${API_BASE_URL}duplicates/`);
+          setDupGroups(res.data.duplicate_groups);
+          const pp = viewMode !== 'list' ? 0 : perPage;
+          fetchCards(currentPage, debouncedSearch, pp);
+        } catch (error) { showSnackbar('削除に失敗しました', 'error'); }
+      };
+
+      const handleKeepBoth = (groupIndex) => {
+        setDupGroups(prev => prev.filter((_, i) => i !== groupIndex));
+        showSnackbar('このグループをスキップしました（両方保持）', 'info');
+      };
+
+      // Page change
+      const handlePageChange = (newPage) => {
+        if (newPage >= 1 && newPage <= totalPages) setCurrentPage(newPage);
+      };
+
+      // Company group view
+      const getCompanyGroups = () => {
+        const groups = {};
+        cards.forEach(card => {
+          const key = card.company_name ? card.company_name.trim() : '（会社名なし）';
+          if (!groups[key]) groups[key] = [];
+          groups[key].push(card);
+        });
+        return Object.entries(groups).sort((a, b) => {
+          if (a[0] === '（会社名なし）') return 1;
+          if (b[0] === '（会社名なし）') return -1;
+          return b[1].length - a[1].length;
+        });
+      };
+
+      // Tag group view
+      const getTagGroups = () => {
+        const groups = {};
+        cards.forEach(card => {
+          if (!card.tags || card.tags.length === 0) {
+            const t = '（タグなし）';
+            if (!groups[t]) groups[t] = [];
+            groups[t].push(card);
+          } else {
+            card.tags.forEach(tag => {
+              const t = tag.name;
+              if (!groups[t]) groups[t] = [];
+              if (!groups[t].some(c => c.id === card.id)) {
+                groups[t].push(card);
+              }
+            });
+          }
+        });
+        return Object.entries(groups).sort((a, b) => {
+          if (a[0] === '（タグなし）') return 1;
+          if (b[0] === '（タグなし）') return -1;
+          return a[0].localeCompare(b[0]);
+        });
+      };
+
+      // --- RENDER ---
+      return (
+        <ThemeProvider theme={theme}>
+          <CssBaseline />
+          <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+            {/* Header */}
+            <Box display="flex" justifyContent="space-between" alignItems="center" mb={3} flexWrap="wrap" gap={1}>
+              <Box display="flex" alignItems="center" gap={1}>
+                <Typography variant="h4" component="h1" color="primary" fontWeight="bold">
+                  名刺管理システム
+                </Typography>
+                <Chip label={`全 ${totalCount} 件`} color="primary" variant="outlined" size="small" />
+              </Box>
+              <Box display="flex" gap={1} flexWrap="wrap" justifyContent="flex-end">
+                <input type="file" id="asyncFileInput" accept="image/*,application/pdf" multiple style={{ display: 'none' }} onChange={handleAsyncFileChange} />
+                <Button variant="contained" color="success" onClick={handleAsyncUploadClick} disabled={isImporting}
+                  startIcon={isImporting ? <CircularProgress size={20} color="inherit" /> : <span className="material-icons">add_a_photo</span>}>
+                  カメラで一括アップ
+                </Button>
+                <Button variant="outlined" color="primary" onClick={handleExportBackup} startIcon={<span className="material-icons">inventory_2</span>}>
+                  フルバックアップ
+                </Button>
+                <input type="file" id="csvFileInput" accept=".csv" style={{ display: 'none' }} onChange={handleCsvFileChange} />
+                <Button variant="outlined" color="error" onClick={handleImportCsvClick} startIcon={<span className="material-icons">upload</span>}>
+                  CSV読込
+                </Button>
+                <Button variant="outlined" color="secondary" onClick={handleManualImport} disabled={isImporting}
+                  startIcon={isImporting ? <CircularProgress size={20} color="inherit" /> : <span className="material-icons">sync</span>}>
+                  {isImporting ? '処理中...' : '手動インポート'}
+                </Button>
+                <Button variant="contained" color="primary" onClick={handleOpenCreateDialog}>
+                  手動入力/確認登録
+                </Button>
+              </Box>
+            </Box>
+
+            {/* Search + View Toggle + Duplicate Scan */}
+            <Box mb={2} display="flex" gap={2} alignItems="center" flexWrap="wrap">
+              <TextField
+                variant="outlined" placeholder="氏名、会社名、メモ等で検索..."
+                value={searchInput} onChange={handleSearchChange}
+                sx={{ backgroundColor: '#fff', minWidth: 300, flexGrow: 1 }}
+                InputProps={{ startAdornment: <InputAdornment position="start"><span className="material-icons" style={{ color: '#757575' }}>search</span></InputAdornment> }}
+              />
+              <Box display="flex" gap={0.5} sx={{ border: '1px solid #ccc', borderRadius: 1, overflow: 'hidden' }}>
+                <Button size="small" variant={viewMode === 'list' ? 'contained' : 'text'} onClick={() => { setViewMode('list'); setCurrentPage(1); }}
+                  startIcon={<span className="material-icons">list</span>} sx={{ borderRadius: 0, textTransform: 'none' }}>
+                  一覧
+                </Button>
+                <Button size="small" variant={viewMode === 'company' ? 'contained' : 'text'} onClick={() => setViewMode('company')}
+                  startIcon={<span className="material-icons">business</span>} sx={{ borderRadius: 0, textTransform: 'none' }}>
+                  会社別
+                </Button>
+                <Button size="small" variant={viewMode === 'tag' ? 'contained' : 'text'} onClick={() => setViewMode('tag')}
+                  startIcon={<span className="material-icons">local_offer</span>} sx={{ borderRadius: 0, textTransform: 'none' }}>
+                  タグ別
+                </Button>
+              </Box>
+              <Tooltip title="同姓同名・同じメールアドレスの名刺を自動検出">
+                <Button variant="outlined" color="warning" onClick={handleDuplicateScan}
+                  startIcon={<span className="material-icons">find_replace</span>}>
+                  重複スキャン
+                </Button>
+              </Tooltip>
+            </Box>
+
+            {/* Selected Actions Bar */}
+            {selectedIds.length > 0 && (
+              <Paper sx={{ p: 1.5, mb: 2, backgroundColor: '#e3f2fd', display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+                <Chip icon={<span className="material-icons" style={{fontSize:18}}>check_circle</span>} label={`${selectedIds.length} 件選択中`} color="primary" />
+                <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+                <Tooltip title="スマホ・Outlookに連絡先を一括登録">
+                  <Button size="small" variant="outlined" onClick={() => handleExportVcf('utf-8-sig', '標準')}
+                    startIcon={<span className="material-icons">contact_phone</span>}>
+                    スマホ・Outlookへ
+                  </Button>
+                </Tooltip>
+                <Tooltip title="Galaxy A23等で文字化けする場合のShift-JIS形式">
+                  <Button size="small" variant="outlined" color="secondary" onClick={() => handleExportVcf('shift_jis', 'Android文字化け用')}
+                    startIcon={<span className="material-icons">android</span>}>
+                    Android旧機種用
+                  </Button>
+                </Tooltip>
+                <Tooltip title="Thunderbirdアドレス帳へインポート">
+                  <Button size="small" variant="outlined" color="info" onClick={handleExportThunderbirdCsv}
+                    startIcon={<span className="material-icons">contact_mail</span>}>
+                    Thunderbird用
+                  </Button>
+                </Tooltip>
+                <Tooltip title="選択した名刺をCSVで出力">
+                  <Button size="small" variant="outlined" color="success" onClick={handleExportCsvSelected}
+                    startIcon={<span className="material-icons">download</span>}>
+                    CSV出力
+                  </Button>
+                </Tooltip>
+                <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+                <Tooltip title="チェックした項目を一括削除">
+                  <Button size="small" variant="outlined" color="error" onClick={handleBulkDelete}
+                    startIcon={<span className="material-icons">delete</span>}>
+                    一括削除
+                  </Button>
+                </Tooltip>
+              </Paper>
+            )}
+
+            {/* === LIST VIEW === */}
+            {viewMode === 'list' && (
+              <>
+                <TableContainer component={Paper} elevation={2}>
+                  <Table sx={{ minWidth: 650 }}>
+                    <TableHead>
+                      <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
+                        <TableCell padding="checkbox">
+                          <Checkbox color="primary"
+                            indeterminate={selectedIds.length > 0 && selectedIds.length < cards.length}
+                            checked={cards.length > 0 && selectedIds.length === cards.length}
+                            onChange={handleSelectAllClick} />
+                        </TableCell>
+                        <TableCell><strong>電子名刺</strong></TableCell>
+                        <TableCell><strong>氏名</strong></TableCell>
+                        <TableCell><strong>会社名</strong></TableCell>
+                        <TableCell><strong>部署・役職</strong></TableCell>
+                        <TableCell><strong>連絡先</strong></TableCell>
+                        <TableCell><strong>交換日</strong></TableCell>
+                        <TableCell align="center"><strong>操作</strong></TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {cards.map((card) => {
+                        const sel = isSelected(card.id);
+                        return (
+                          <TableRow key={card.id} hover role="checkbox" aria-checked={sel} selected={sel}>
+                            <TableCell padding="checkbox">
+                              <Checkbox color="primary" checked={sel} onChange={(e) => handleClickSelect(e, card.id)} />
+                            </TableCell>
+                            <TableCell><VirtualCardComponent card={card} size="small" /></TableCell>
+                            <TableCell>
+                              <Typography variant="body2">{card.name || '(名称未設定)'}</Typography>
+                              <Box display="flex" flexWrap="wrap" gap={0.5} mt={0.5} alignItems="center">
+                                {card.tags && card.tags.map(t => <Chip key={t.id} label={t.name} size="small" sx={{ height: 18, fontSize: '0.65rem' }} />)}
+                                {card.attachments && card.attachments.length > 0 && (
+                                  <Tooltip title={`${card.attachments.length}件の添付ファイル`}><span className="material-icons" style={{ fontSize: 16, color: '#757575' }}>attach_file</span></Tooltip>
+                                )}
+                              </Box>
+                            </TableCell>
+                            <TableCell>{card.company_name || '-'}</TableCell>
+                            <TableCell>{card.department} {card.title}</TableCell>
+                            <TableCell>
+                              <Box fontSize="0.85rem">
+                                {card.address && <div>〒 {card.address}</div>}
+                                {card.phone_number && <div>TEL: {card.phone_number}</div>}
+                                {card.email && <div>Email: {card.email}</div>}
+                              </Box>
+                            </TableCell>
+                            <TableCell>{card.exchange_date}</TableCell>
+                            <TableCell align="center">
+                              <Button size="small" variant="outlined" sx={{ mr: 1, mb: { xs: 1, sm: 0 } }} onClick={() => openEditDialog(card)}>編集</Button>
+                              <Button size="small" variant="outlined" color="error" onClick={() => handleDelete(card.id)}>削除</Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                      {cards.length === 0 && (
+                        <TableRow><TableCell colSpan={8} align="center">該当する名刺データはありません。</TableCell></TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+
+                {/* Pagination */}
+                {totalPages > 1 && (
+                  <Box display="flex" justifyContent="center" alignItems="center" mt={2} mb={2} gap={2}>
+                    <Button size="small" disabled={currentPage <= 1} onClick={() => handlePageChange(currentPage - 1)}
+                      startIcon={<span className="material-icons">chevron_left</span>}>前へ</Button>
+                    <Typography variant="body2" color="textSecondary">
+                      {currentPage} / {totalPages} ページ（全 {totalCount} 件）
+                    </Typography>
+                    <Button size="small" disabled={currentPage >= totalPages} onClick={() => handlePageChange(currentPage + 1)}
+                      endIcon={<span className="material-icons">chevron_right</span>}>次へ</Button>
+                    <FormControl size="small" sx={{ minWidth: 80 }}>
+                      <Select value={perPage} onChange={(e) => { setPerPage(e.target.value); setCurrentPage(1); }}>
+                        <MenuItem value={25}>25件</MenuItem>
+                        <MenuItem value={50}>50件</MenuItem>
+                        <MenuItem value={100}>100件</MenuItem>
+                        <MenuItem value={200}>200件</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Box>
+                )}
+              </>
+            )}
+
+            {/* === COMPANY GROUP VIEW === */}
+            {viewMode === 'company' && (
+              <Box>
+                {getCompanyGroups().map(([companyName, groupCards]) => (
+                  <Accordion key={companyName} defaultExpanded={groupCards.length <= 5} sx={{ mb: 1 }}>
+                    <AccordionSummary expandIcon={<span className="material-icons">expand_more</span>}
+                      sx={{ backgroundColor: '#f5f5f5' }}>
+                      <Box display="flex" alignItems="center" gap={1} width="100%">
+                        <span className="material-icons" style={{ color: '#1976d2' }}>business</span>
+                        <Typography variant="subtitle1" fontWeight="bold">{companyName}</Typography>
+                        <Chip label={`${groupCards.length}件`} size="small" color="primary" variant="outlined" />
+                      </Box>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ p: 0 }}>
+                      <Table size="small">
+                        <TableBody>
+                          {groupCards.map(card => {
+                            const sel = isSelected(card.id);
+                            return (
+                              <TableRow key={card.id} hover selected={sel}>
+                                <TableCell padding="checkbox" sx={{ width: 48 }}>
+                                  <Checkbox size="small" checked={sel} onChange={(e) => handleClickSelect(e, card.id)} />
+                                </TableCell>
+                                <TableCell sx={{ width: 180 }}><VirtualCardComponent card={card} size="small" /></TableCell>
+                                <TableCell>
+                                  <Typography variant="subtitle2" fontWeight="bold">{card.name || '(名称未設定)'}</Typography>
+                                  <Typography variant="caption" color="textSecondary">{card.department} {card.title}</Typography>
+                                  <Box display="flex" flexWrap="wrap" gap={0.5} mt={0.5} alignItems="center">
+                                    {card.tags && card.tags.map(t => <Chip key={t.id} label={t.name} size="small" sx={{ height: 18, fontSize: '0.65rem' }} />)}
+                                    {card.attachments && card.attachments.length > 0 && (
+                                      <Tooltip title={`${card.attachments.length}件の添付ファイル`}><span className="material-icons" style={{ fontSize: 16, color: '#757575' }}>attach_file</span></Tooltip>
+                                    )}
+                                  </Box>
+                                </TableCell>
+                                <TableCell>
+                                  <Box fontSize="0.8rem">
+                                    {card.phone_number && <div>TEL: {card.phone_number}</div>}
+                                    {card.email && <div>Email: {card.email}</div>}
+                                  </Box>
+                                </TableCell>
+                                <TableCell>{card.exchange_date}</TableCell>
+                                <TableCell align="right">
+                                  <IconButton size="small" onClick={() => openEditDialog(card)}><span className="material-icons">edit</span></IconButton>
+                                  <IconButton size="small" color="error" onClick={() => handleDelete(card.id)}><span className="material-icons">delete</span></IconButton>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </AccordionDetails>
+                  </Accordion>
+                ))}
+                {cards.length === 0 && (
+                  <Paper sx={{ p: 4, textAlign: 'center' }}>
+                    <Typography color="textSecondary">該当する名刺データはありません。</Typography>
+                  </Paper>
+                )}
+              </Box>
+            )}
+
+            {/* === TAG GROUP VIEW === */}
+            {viewMode === 'tag' && (
+              <Box>
+                {getTagGroups().map(([tagName, groupCards]) => (
+                  <Accordion key={tagName} defaultExpanded={groupCards.length <= 5} sx={{ mb: 1 }}>
+                    <AccordionSummary expandIcon={<span className="material-icons">expand_more</span>}
+                      sx={{ backgroundColor: '#f5f5f5' }}>
+                      <Box display="flex" alignItems="center" gap={1} width="100%">
+                        <span className="material-icons" style={{ color: '#1976d2' }}>local_offer</span>
+                        <Typography variant="subtitle1" fontWeight="bold">{tagName}</Typography>
+                        <Chip label={`${groupCards.length}件`} size="small" color="primary" variant="outlined" />
+                      </Box>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ p: 0 }}>
+                      <Table size="small">
+                        <TableBody>
+                          {groupCards.map(card => {
+                            const sel = isSelected(card.id);
+                            return (
+                              <TableRow key={card.id} hover selected={sel}>
+                                <TableCell padding="checkbox" sx={{ width: 48 }}>
+                                  <Checkbox size="small" checked={sel} onChange={(e) => handleClickSelect(e, card.id)} />
+                                </TableCell>
+                                <TableCell sx={{ width: 180 }}><VirtualCardComponent card={card} size="small" /></TableCell>
+                                <TableCell>
+                                  <Typography variant="subtitle2" fontWeight="bold">{card.name || '(名称未設定)'}</Typography>
+                                  <Typography variant="caption" color="textSecondary">{card.company_name} {card.department} {card.title}</Typography>
+                                  <Box display="flex" flexWrap="wrap" gap={0.5} mt={0.5} alignItems="center">
+                                    {card.tags && card.tags.map(t => <Chip key={t.id} label={t.name} size="small" sx={{ height: 18, fontSize: '0.65rem' }} />)}
+                                    {card.attachments && card.attachments.length > 0 && (
+                                      <Tooltip title={`${card.attachments.length}件の添付ファイル`}><span className="material-icons" style={{ fontSize: 16, color: '#757575' }}>attach_file</span></Tooltip>
+                                    )}
+                                  </Box>
+                                </TableCell>
+                                <TableCell>
+                                  <Box fontSize="0.8rem">
+                                    {card.phone_number && <div>TEL: {card.phone_number}</div>}
+                                    {card.email && <div>Email: {card.email}</div>}
+                                  </Box>
+                                </TableCell>
+                                <TableCell>{card.exchange_date}</TableCell>
+                                <TableCell align="right">
+                                  <IconButton size="small" onClick={() => openEditDialog(card)}><span className="material-icons">edit</span></IconButton>
+                                  <IconButton size="small" color="error" onClick={() => handleDelete(card.id)}><span className="material-icons">delete</span></IconButton>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </AccordionDetails>
+                  </Accordion>
+                ))}
+                {cards.length === 0 && (
+                  <Paper sx={{ p: 4, textAlign: 'center' }}>
+                    <Typography color="textSecondary">該当する名刺データはありません。</Typography>
+                  </Paper>
+                )}
+              </Box>
+            )}
+
+            {/* Create/Edit Dialog */}
+            <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
+              <DialogTitle>{editMode ? '名刺の編集' : '新規名刺登録'}</DialogTitle>
+              <form onSubmit={handleSubmit}>
+                <DialogContent dividers>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12}>
+                      <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                        OCR解析用ファイル添付（カメラやファイルから自動で文字入力を支援したい場合のみ）
+                      </Typography>
+                      <input type="file" hidden accept="image/*,application/pdf" capture="environment" onChange={handleFileChange} ref={fileInputRef} />
+                    </Grid>
+                    <Grid item xs={12} sm={6}><TextField fullWidth label="氏名" name="name" value={formData.name || ''} onChange={handleInputChange} /></Grid>
+                    <Grid item xs={12} sm={6}><TextField fullWidth label="会社名" name="company_name" value={formData.company_name || ''} onChange={handleInputChange} /></Grid>
+                    <Grid item xs={12} sm={6}><TextField fullWidth label="部署" name="department" value={formData.department} onChange={handleInputChange} /></Grid>
+                    <Grid item xs={12} sm={6}><TextField fullWidth label="役職" name="title" value={formData.title} onChange={handleInputChange} /></Grid>
+                    <Grid item xs={12} sm={6}><TextField fullWidth label="電話番号" name="phone_number" value={formData.phone_number} onChange={handleInputChange} /></Grid>
+                    <Grid item xs={12} sm={6}><TextField fullWidth label="メールアドレス" type="email" name="email" value={formData.email} onChange={handleInputChange} /></Grid>
+                    <Grid item xs={12}><TextField fullWidth label="住所" name="address" value={formData.address || ''} onChange={handleInputChange} /></Grid>
+                    <Grid item xs={12} sm={6}><TextField fullWidth label="名刺交換日" type="date" name="exchange_date" value={formData.exchange_date || ''} onChange={handleInputChange} InputLabelProps={{ shrink: true }} /></Grid>
+                    <Grid item xs={12} sm={6}>
+                      <Autocomplete
+                        multiple
+                        freeSolo
+                        options={availableTags.map(t => t.name)}
+                        value={formTags}
+                        onChange={(e, nv) => setFormTags(nv)}
+                        renderTags={(value, getTagProps) =>
+                          value.map((option, index) => (
+                            <Chip size="small" variant="outlined" color="primary" label={option} {...getTagProps({ index })} />
+                          ))
+                        }
+                        renderInput={(params) => (
+                          <TextField {...params} label="タグ (自由に作成可能)" placeholder="タグ追加" />
+                        )}
+                      />
+                    </Grid>
+                    <Grid item xs={12}><TextField fullWidth label="メモ (現場名、保有資格、打ち合わせ内容など)" name="memo" value={formData.memo || ''} onChange={handleInputChange} multiline rows={4} /></Grid>
+                  </Grid>
+                </DialogContent>
+                <DialogActions>
+                  <Button onClick={handleCloseDialog} color="inherit">キャンセル</Button>
+                  <Button type="submit" variant="contained" color="primary">{editMode ? '更新する' : '登録する'}</Button>
+                </DialogActions>
+              </form>
+            </Dialog>
+
+            {/* Snackbar */}
+            <Snackbar open={snackbar.open} autoHideDuration={4000} onClose={handleCloseSnackbar} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+              <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>{snackbar.message}</Alert>
+            </Snackbar>
+
+            {/* Card Viewer Dialog with Tabs (Details + History) */}
+            <Dialog open={viewerOpen} onClose={closeImageViewer} maxWidth="sm" fullWidth>
+              <DialogTitle sx={{ pb: 0 }}>
+                電子名刺ビューア
+                <IconButton aria-label="close" onClick={closeImageViewer} sx={{ position: 'absolute', right: 8, top: 8, color: (t) => t.palette.grey[500] }}>
+                  <span className="material-icons">close</span>
+                </IconButton>
+              </DialogTitle>
+              <Tabs value={viewerTab} onChange={(e, v) => setViewerTab(v)} sx={{ px: 3 }}>
+                <Tab label="詳細" />
+                <Tab label={`変更履歴 (${cardHistory.length})`} />
+                <Tab label={`添付ファイル (${viewerCard?.attachments?.length || 0})`} />
+              </Tabs>
+              <DialogContent dividers sx={{ backgroundColor: '#fcfcfc' }}>
+                {viewerCard && viewerTab === 0 && (
+                  <>
+                    <Box display="flex" justifyContent="center" mb={3}>
+                      <VirtualCardComponent card={viewerCard} size="large" />
+                    </Box>
+                    <Box sx={{ maxWidth: 360, mx: 'auto', bgcolor: 'background.paper', borderRadius: 2, boxShadow: 1, p: 2 }}>
+                      {[
+                        { icon: 'location_on', value: viewerCard.address, label: '住所' },
+                        { icon: 'phone', value: viewerCard.phone_number, label: '電話番号' },
+                        { icon: 'email', value: viewerCard.email, label: 'メール' },
+                        { icon: 'calendar_today', value: viewerCard.exchange_date, label: '交換日' },
+                      ].map((item, i) => (
+                        <Box key={i} display="flex" alignItems="center" mb={1.5}>
+                          <span className="material-icons" style={{ color: '#1976d2', marginRight: '8px' }}>{item.icon}</span>
+                          <Typography variant="body1" color={item.value ? 'textPrimary' : 'textSecondary'}>
+                            {item.value || '未設定'}
+                          </Typography>
+                        </Box>
+                      ))}
+                      {viewerCard.memo && (
+                        <Box mt={2} p={1.5} sx={{ backgroundColor: '#f9f9f9', borderRadius: 1, border: '1px solid #eee' }}>
+                          <Typography variant="caption" color="textSecondary">メモ</Typography>
+                          <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mt: 0.5 }}>{viewerCard.memo}</Typography>
+                        </Box>
+                      )}
+                      <Box mt={2}>
+                        <Typography variant="caption" color="textSecondary">
+                          作成日時: {new Date(viewerCard.created_at).toLocaleString('ja-JP')}
+                        </Typography>
+                        <br />
+                        <Typography variant="caption" color="textSecondary">
+                          更新日時: {new Date(viewerCard.updated_at).toLocaleString('ja-JP')}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </>
+                )}
+                {viewerCard && viewerTab === 1 && (
+                  <Box>
+                    {cardHistory.length === 0 ? (
+                      <Typography color="textSecondary" textAlign="center" py={4}>変更履歴はまだありません</Typography>
+                    ) : (
+                      cardHistory.map((h, i) => (
+                        <Paper key={h.id} sx={{ p: 2, mb: 1.5, border: h.change_type === 'merge' ? '2px solid #ff9800' : '1px solid #eee' }}>
+                          <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.5}>
+                            <Chip size="small" label={h.change_type === 'merge' ? '統合' : '更新'}
+                              color={h.change_type === 'merge' ? 'warning' : 'default'} />
+                            <Typography variant="caption" color="textSecondary">
+                              {new Date(h.changed_at).toLocaleString('ja-JP')}
+                            </Typography>
+                          </Box>
+                          <Typography variant="body2" fontWeight="bold" mb={0.5}>
+                            {FIELD_LABELS[h.field_name] || h.field_name}
+                          </Typography>
+                          <Box sx={{ fontSize: '0.85rem' }}>
+                            {h.old_value && <Box sx={{ color: '#d32f2f', textDecoration: 'line-through', mb: 0.3 }}>旧: {h.old_value}</Box>}
+                            <Box sx={{ color: '#2e7d32' }}>新: {h.new_value}</Box>
+                          </Box>
+                        </Paper>
+                      ))
+                    )}
+                  </Box>
+                )}
+                {viewerCard && viewerTab === 2 && (
+                  <Box p={2}>
+                    <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                      <Typography variant="subtitle1" fontWeight="bold">関連ファイル</Typography>
+                      <Button component="label" variant="outlined" size="small" startIcon={<span className="material-icons">upload_file</span>}>
+                        ファイルを追加
+                        <input type="file" hidden multiple onChange={handleAttachFile} />
+                      </Button>
+                    </Box>
+                    {uploadingAttachment && <CircularProgress size={24} sx={{ mb: 2 }} />}
+                    
+                    {viewerCard.attachments && viewerCard.attachments.length > 0 ? (
+                      <Grid container spacing={2}>
+                        {viewerCard.attachments.map(att => (
+                          <Grid item xs={12} sm={6} key={att.id}>
+                            <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                               <span className="material-icons" style={{ color: '#555' }}>
+                                 {att.file_name.toLowerCase().endsWith('.pdf') ? 'picture_as_pdf' : 'image'}
+                               </span>
+                               <Box flex={1} overflow="hidden">
+                                 <Typography variant="body2" noWrap title={att.file_name}>
+                                    <a href={att.file_path} target="_blank" rel="noreferrer" style={{textDecoration:'none', color:'#1976d2'}}>{att.file_name}</a>
+                                 </Typography>
+                                 <Typography variant="caption" color="textSecondary">{new Date(att.uploaded_at).toLocaleDateString('ja-JP')}</Typography>
+                               </Box>
+                               <IconButton size="small" color="error" onClick={() => handleDeleteAttachment(att.id)}>
+                                 <span className="material-icons">delete</span>
+                               </IconButton>
+                            </Paper>
+                          </Grid>
+                        ))}
+                      </Grid>
+                    ) : (
+                      <Typography color="textSecondary" textAlign="center" py={4} variant="body2">
+                        添付されたファイルはありません<br/>裏面画像やPDF資料をアップロードできます
+                      </Typography>
+                    )}
+                  </Box>
+                )}
+              </DialogContent>
+            </Dialog>
+
+            {/* Duplicate Scanner Dialog */}
+            <Dialog open={dupDialogOpen} onClose={() => setDupDialogOpen(false)} maxWidth="md" fullWidth>
+              <DialogTitle>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <span className="material-icons" style={{ color: '#ed6c02' }}>find_replace</span>
+                  重複名刺スキャン結果
+                  {dupGroups.length > 0 && <Chip label={`${dupGroups.length} グループ`} color="warning" size="small" />}
+                </Box>
+                <IconButton onClick={() => setDupDialogOpen(false)} sx={{ position: 'absolute', right: 8, top: 8 }}>
+                  <span className="material-icons">close</span>
+                </IconButton>
+              </DialogTitle>
+              <DialogContent dividers>
+                {isDupScanning ? (
+                  <Box textAlign="center" py={4}><CircularProgress /><Typography sx={{ mt: 2 }}>スキャン中...</Typography></Box>
+                ) : dupGroups.length === 0 ? (
+                  <Box textAlign="center" py={4}>
+                    <span className="material-icons" style={{ fontSize: 48, color: '#4caf50' }}>check_circle</span>
+                    <Typography variant="h6" sx={{ mt: 1 }}>重複は見つかりませんでした</Typography>
+                  </Box>
+                ) : (
+                  dupGroups.map((group, gi) => (
+                    <Paper key={gi} sx={{ p: 2, mb: 2, border: '1px solid #ffe0b2' }}>
+                      <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+                        <Box display="flex" alignItems="center" gap={1}>
+                          <Chip size="small" label={group.match_type === 'name' ? '同姓同名' : '同一メール'} color="warning" />
+                          <Typography variant="subtitle1" fontWeight="bold">「{group.match_value}」</Typography>
+                          <Typography variant="caption" color="textSecondary">({group.cards.length}件)</Typography>
+                        </Box>
+                        <Button size="small" variant="outlined" color="inherit"
+                          onClick={() => handleKeepBoth(gi)}
+                          startIcon={<span className="material-icons" style={{fontSize:16}}>check_circle_outline</span>}>
+                          両方保持（スキップ）
+                        </Button>
+                      </Box>
+                      <Grid container spacing={2}>
+                        {group.cards.map((card, ci) => (
+                          <Grid item xs={12} sm={6} key={card.id}>
+                            <Paper variant="outlined" sx={{ p: 2, border: ci === 0 ? '2px solid #1976d2' : '1px solid #ddd', position: 'relative' }}>
+                              {ci === 0 && <Chip label="★ 最新" color="primary" size="small" sx={{ position: 'absolute', top: 8, right: 8 }} />}
+                              {ci > 0 && <Chip label="古い" size="small" variant="outlined" sx={{ position: 'absolute', top: 8, right: 8 }} />}
+                              <Typography variant="subtitle2" fontWeight="bold">{card.name || '(名称未設定)'}</Typography>
+                              <Typography variant="body2" color="textSecondary">{card.company_name || ''}</Typography>
+                              <Typography variant="caption">{card.department} {card.title}</Typography>
+                              <Divider sx={{ my: 1 }} />
+                              <Typography variant="caption" display="block">TEL: {card.phone_number || '-'}</Typography>
+                              <Typography variant="caption" display="block">Email: {card.email || '-'}</Typography>
+                              <Typography variant="caption" display="block" color="textSecondary">
+                                登録日: {new Date(card.created_at).toLocaleDateString('ja-JP')}
+                              </Typography>
+                              {ci > 0 && (
+                                <Box mt={1.5} display="flex" gap={1} flexWrap="wrap">
+                                  <Button size="small" variant="contained" color="primary"
+                                    onClick={() => handleMergeInDialog(group.cards[0].id, card.id)}
+                                    startIcon={<span className="material-icons" style={{fontSize:16}}>merge_type</span>}>
+                                    最新へ統合
+                                  </Button>
+                                  <Button size="small" variant="outlined" color="error"
+                                    onClick={() => handleDeleteInDialog(card.id)}
+                                    startIcon={<span className="material-icons" style={{fontSize:16}}>delete</span>}>
+                                    古い方を削除
+                                  </Button>
+                                </Box>
+                              )}
+                            </Paper>
+                          </Grid>
+                        ))}
+                      </Grid>
+                    </Paper>
+                  ))
+                )}
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setDupDialogOpen(false)}>閉じる</Button>
+              </DialogActions>
+            </Dialog>
+
+            {/* Backdrop for Loading */}
+            <Backdrop sx={{ color: '#fff', zIndex: (theme) => theme.zIndex.drawer + 1, flexDirection: 'column' }} open={isAnalyzing}>
+              <CircularProgress color="inherit" />
+              <Typography variant="h6" sx={{ mt: 2 }}>名刺画像をAIで解析中...</Typography>
+            </Backdrop>
+          </Container>
+        </ThemeProvider>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+
+</html>
