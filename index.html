@@ -16,20 +16,10 @@
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 
   <style>
+  <style>
     body {
       margin: 0;
-      background: linear-gradient(135deg, #f0f4f8 0%, #d7e3ec 100%);
-      min-height: 100vh;
-      font-family: 'Roboto', 'Noto Sans JP', sans-serif;
-    }
-    .main-container {
-      padding-top: 32px;
-      padding-bottom: 32px;
-    }
-    .premium-paper {
-      border-radius: 12px !important;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.08) !important;
-      border: 1px solid rgba(255,255,255,0.3) !important;
+      background-color: #f4f7f6;
     }
   </style>
 </head>
@@ -45,7 +35,7 @@
       Dialog, DialogTitle, DialogContent, DialogActions, Snackbar, Alert,
       Avatar, InputAdornment, CircularProgress, Backdrop, Checkbox, Tooltip, IconButton,
       Chip, Divider, Tabs, Tab, Accordion, AccordionSummary, AccordionDetails,
-      Select, MenuItem, FormControl, InputLabel, Autocomplete, Fade, Grow
+      Select, MenuItem, FormControl, InputLabel, Autocomplete
     } = MaterialUI;
 
     const { useState, useEffect, useRef, useCallback } = React;
@@ -55,16 +45,10 @@
 
     const theme = createTheme({
       palette: {
-        primary: { main: '#2c3e50', light: '#4b6584' },
-        secondary: { main: '#1976d2' },
-        success: { main: '#27ae60' },
-        background: { default: 'transparent', paper: '#ffffff' },
+        primary: { main: '#1976d2' },
+        background: { default: '#f4f7f6', paper: '#ffffff' },
       },
-      shape: { borderRadius: 8 },
-      typography: { 
-        fontFamily: "'Roboto', 'Noto Sans JP', sans-serif",
-        h4: { fontWeight: 700, letterSpacing: '-0.02em' }
-      },
+      typography: { fontFamily: 'Roboto, sans-serif' },
     });
 
     const FIELD_LABELS = {
@@ -605,12 +589,16 @@
                   スキャンデータ一括登録
                 </Button>
                 <Box display="flex" gap={1}>
-                  <Tooltip title="システムの全データを書き出し">
-                    <IconButton color="primary" onClick={handleExportBackup} sx={{ border: '1px solid #ccc' }}><span className="material-icons">inventory_2</span></IconButton>
+                  <Tooltip title="フォルダ内の未処理ファイルを強制解析">
+                    <Button variant="outlined" color="primary" onClick={handleManualImport} disabled={isImporting} size="small"
+                      startIcon={<span className="material-icons" style={{fontSize:16}}>sync</span>}>手動同期</Button>
+                  </Tooltip>
+                  <Tooltip title="バックアップ作成">
+                    <IconButton color="primary" onClick={handleExportBackup} sx={{ border: '1px solid #ccc' }} size="small"><span className="material-icons">inventory_2</span></IconButton>
                   </Tooltip>
                   <input type="file" id="csvFileInput" accept=".csv" style={{ display: 'none' }} onChange={handleCsvFileChange} />
-                  <Tooltip title="CSVからインポート">
-                    <IconButton color="error" onClick={handleImportCsvClick} sx={{ border: '1px solid #ccc' }}><span className="material-icons">upload_file</span></IconButton>
+                  <Tooltip title="CSV読込">
+                    <IconButton color="error" onClick={handleImportCsvClick} sx={{ border: '1px solid #ccc' }} size="small"><span className="material-icons">upload_file</span></IconButton>
                   </Tooltip>
                   <Button variant="outlined" color="primary" onClick={handleOpenCreateDialog} sx={{ fontWeight: 'bold' }}>
                     新規登録
@@ -652,11 +640,24 @@
             <Grow in={selectedIds.length > 0}>
               <Paper sx={{ p: 1.5, mb: 3, backgroundColor: '#2c3e50', color: '#fff', display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', borderRadius: 3, boxShadow: 6 }}>
                 <Chip label={`${selectedIds.length} 件選択中`} sx={{ bgcolor: '#fff', color: '#2c3e50', fontWeight: 'bold' }} />
+                <Divider orientation="vertical" flexItem sx={{ mx: 0.5, bgcolor: 'rgba(255,255,255,0.2)' }} />
+                <Box display="flex" gap={1} flexWrap="wrap">
+                  <Tooltip title="標準形式(スマホ・Outlook等)">
+                    <Button size="small" variant="contained" color="secondary" onClick={() => handleExportVcf('utf-8-sig', '標準')}
+                      startIcon={<span className="material-icons">contact_phone</span>}>スマホ登録</Button>
+                  </Tooltip>
+                  <Tooltip title="Android旧機種の文字化け対策版">
+                    <Button size="small" variant="outlined" sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.5)' }} onClick={() => handleExportVcf('shift_jis', 'Android文字化け用')}
+                      startIcon={<span className="material-icons">android</span>}>旧Android用</Button>
+                  </Tooltip>
+                  <Tooltip title="Thunderbirdアドレス帳用CSV">
+                    <Button size="small" variant="outlined" sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.5)' }} onClick={handleExportThunderbirdCsv}
+                      startIcon={<span className="material-icons">email</span>}>Thunderbird用</Button>
+                  </Tooltip>
+                  <Button size="small" variant="contained" color="success" onClick={handleExportCsvSelected}
+                    startIcon={<span className="material-icons">download</span>}>CSV出力</Button>
+                </Box>
                 <Box flexGrow={1} />
-                <Button size="small" variant="contained" color="secondary" onClick={() => handleExportVcf('utf-8-sig', '標準')}
-                  startIcon={<span className="material-icons">contact_phone</span>}>スマホ登録</Button>
-                <Button size="small" variant="contained" color="success" onClick={handleExportCsvSelected}
-                  startIcon={<span className="material-icons">download</span>}>CSV出力</Button>
                 <Button size="small" variant="contained" color="error" onClick={handleBulkDelete}
                   startIcon={<span className="material-icons">delete_forever</span>}>一括削除</Button>
               </Paper>
