@@ -1,0 +1,13 @@
+C:\Users\owner\Desktop\アンチ\名刺管理アプリ\check_api.py:2: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+Key loaded: YES
+Starts with: AIza
+Length: 39
+FAILED WITH ERROR: 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
