@@ -32,11 +32,26 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(AUTO_IMPORT_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# List of models for fallback pattern (有料プランになれば上位版を追加可能)
+# List of models for fallback pattern
 MODELS_TO_TRY = [
+    "gemini-3.1-pro-preview",
     "gemini-2.5-pro",
-    "gemini-2.5-flash"
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.0-flash",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash"
 ]
+
+# Supabase Initialization (for cloud storage)
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase_client = None
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        from supabase import create_client
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        print(f"Watcher: Failed to initialize Supabase: {e}")
 
 def perform_ocr(image_path: str):
     if not API_KEY or API_KEY == "YOUR_API_KEY_HERE":
@@ -155,40 +170,55 @@ def process_file(src_path: str):
     if not ocr_results:
         ocr_results = [{}]
 
-    # Move file to uploads
+    # Move/Upload image
     new_filename = f"{uuid.uuid4()}{ext}"
-    dest_path = os.path.join(UPLOAD_DIR, new_filename)
-    try:
-        shutil.move(src_path, dest_path)
-        
-        # PDFの場合はサムネイル(PNG)を生成してそちらをDBに登録する
-        if ext == '.pdf':
-            try:
-                doc = fitz.open(dest_path)
-                if len(doc) > 0:
-                    page = doc[0]
-                    mat = fitz.Matrix(2, 2)
-                    pix = page.get_pixmap(matrix=mat)
-                    png_filename = new_filename.replace('.pdf', '.png')
-                    png_dest_path = os.path.join(UPLOAD_DIR, png_filename)
-                    with open(png_dest_path, "wb") as f:
-                        f.write(pix.tobytes("png"))
+    final_image_path = None
+
+    # クラウドストレージ(Supabase)へのアップロード試行
+    if supabase_client:
+        try:
+            # PDFの場合は1ページ目をサムネイル化してアップロード
+            if ext == '.pdf':
+                try:
+                    doc = fitz.open(src_path)
+                    if len(doc) > 0:
+                        page = doc[0]
+                        pix = page.get_pixmap(matrix=fitz.Matrix(2,2))
+                        png_data = pix.tobytes("png")
+                        new_filename = new_filename.replace('.pdf', '.png')
+                        supabase_client.storage.from_("cards").upload(new_filename, png_data)
+                        final_image_path = supabase_client.storage.from_("cards").get_public_url(new_filename)
                     doc.close()
-                    new_filename = png_filename
-            except Exception as e:
-                print(f"Watcher: Failed to generate PNG from PDF: {e}")
-                
-    except Exception as e:
-        print(f"Watcher: Failed to move file: {e}")
-        return
+                except Exception as e:
+                    print(f"Watcher: PDF thumbnail generation failed: {e}")
+            else:
+                # 通常画像
+                with open(src_path, "rb") as f:
+                    supabase_client.storage.from_("cards").upload(new_filename, f.read())
+                final_image_path = supabase_client.storage.from_("cards").get_public_url(new_filename)
+            
+            # 処理済みローカルファイルを削除
+            if os.path.exists(src_path):
+                os.remove(src_path)
+            print(f"Watcher: Successfully uploaded {new_filename} to Supabase.")
+        except Exception as e:
+            print(f"Watcher: Supabase upload failed: {e}. Falling back to local storage.")
+
+    # クラウドアップロードに失敗した場合や設定がない場合、ローカルに保持（エフェメラル）
+    if not final_image_path:
+        dest_path = os.path.join(UPLOAD_DIR, new_filename)
+        try:
+            shutil.move(src_path, dest_path)
+            final_image_path = f"/uploads/{new_filename}"
+        except Exception as e:
+            print(f"Watcher: Failed to hold file locally: {e}")
+            return
 
     # DB Registration
     db = database.SessionLocal()
     try:
         for idx, ocr_result in enumerate(ocr_results):
-            # 複数抽出された場合、画像は最初の1件目のみに紐付け、2件目以降は画像なし（電子名刺扱い）とする
-            current_image_path = f"/uploads/{new_filename}" if idx == 0 else None
-            
+            # 複数抽出された場合、画像は最初の一件のみ、それ以外は電子名刺
             db_card = models.DBBusinessCard(
                 name=ocr_result.get("name"),
                 company_name=ocr_result.get("company_name"),
@@ -197,12 +227,12 @@ def process_file(src_path: str):
                 phone_number=ocr_result.get("phone_number"),
                 email=ocr_result.get("email"),
                 address=ocr_result.get("address"),
-                memo=ocr_result.get("memo") and f"[自動インポート]\n{ocr_result.get('memo', '')}" or "[自動インポート]",
-                image_path=current_image_path
+                memo=ocr_result.get("memo") and f"[一括登録]\n{ocr_result.get('memo', '')}" or "[一括登録]",
+                image_path=final_image_path if idx == 0 else None
             )
             db.add(db_card)
         db.commit()
-        print(f"Watcher: Successfully registered {len(ocr_results)} card(s) from {new_filename}")
+        print(f"Watcher: Successfully registered {len(ocr_results)} card(s) in DB.")
     except Exception as e:
         db.rollback()
         print(f"Watcher: DB Error: {e}")
