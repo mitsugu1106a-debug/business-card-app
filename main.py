@@ -1,4 +1,5 @@
-﻿import base64
+# VERSION: 2026-04-14-REPAIR-FINAL
+import base64
 import secrets
 from fastapi import FastAPI, Depends, HTTPException, Form, File, UploadFile, Body, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -434,7 +435,7 @@ def create_card(
     return db_card
 
 @app.get("/cards/")
-def read_cards(page: int = 1, per_page: int = 50, search: str = "", db: Session = Depends(database.get_db)):
+def read_cards(page: int = 1, per_page: int = 500, search: str = "", db: Session = Depends(database.get_db)):
     query = db.query(models.DBBusinessCard)
 
     if search:
@@ -959,9 +960,15 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(databas
         
         text_content = ""
         try:
+            # 1. まずUTF-8 (BOM付き含む)
             text_content = content.decode('utf-8-sig')
         except UnicodeDecodeError:
-            text_content = content.decode('shift_jis')
+            try:
+                # 2. 失敗したら日本のWindowsで標準的なcp932 (Shift-JIS拡張)
+                text_content = content.decode('cp932')
+            except UnicodeDecodeError:
+                # 3. それでもダメなら、不明な文字を?に置き換えて強引に読み込む（エラーで止めない）
+                text_content = content.decode('cp932', errors='replace')
             
         csv_reader = csv.DictReader(io.StringIO(text_content))
         
