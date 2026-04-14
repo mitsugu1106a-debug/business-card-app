@@ -1,4 +1,4 @@
-import base64
+﻿import base64
 import secrets
 from fastapi import FastAPI, Depends, HTTPException, Form, File, UploadFile, Body, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -948,6 +948,7 @@ def generate_csv_response(card_ids: List[str], db: Session):
         }
     )
 
+
 @app.post("/import-csv/")
 async def import_csv(file: UploadFile = File(...), db: Session = Depends(database.get_db)):
     if not file.filename.endswith('.csv'):
@@ -956,13 +957,10 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(databas
     try:
         content = await file.read()
         
-        # 文字コードの判定（Excel保存時のShift-JISや、BOM付きUTF-8への対応）
         text_content = ""
         try:
-            # まずUTF-8(BOM付き含む)でデコードを試みる
-            text_content = content.decode('utf-8-sig') # utf-8-sig is smart enough to remove BOM if present
+            text_content = content.decode('utf-8-sig')
         except UnicodeDecodeError:
-            # 失敗したらShift-JISでデコードを試みる
             text_content = content.decode('shift_jis')
             
         csv_reader = csv.DictReader(io.StringIO(text_content))
@@ -970,19 +968,18 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(databas
         imported_count = 0
         updated_count = 0
         skipped_count = 0
+        batch_count = 0
+        BATCH_SIZE = 50
         
         for row in csv_reader:
-            # 必須項目チェック (少なくともIDは必要)
             card_id = row.get("id")
             if not card_id:
                 skipped_count += 1
                 continue
                 
-            # 既存のレコードをチェック
             existing_card = db.query(models.DBBusinessCard).filter(models.DBBusinessCard.id == card_id).first()
             
             if existing_card:
-                # 存在する場合は内容を上書き(更新)する
                 existing_card.name = row.get("name", existing_card.name)
                 existing_card.company_name = row.get("company_name", existing_card.company_name)
                 existing_card.department = row.get("department", existing_card.department)
@@ -993,16 +990,13 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(databas
                 existing_card.exchange_date = row.get("exchange_date", existing_card.exchange_date)
                 existing_card.memo = row.get("memo", existing_card.memo)
                 
-                # 画像パスは空でなければ上書きする
                 csv_image_path = row.get("image_path")
                 if csv_image_path:
-                    # CSVからインポートする際に \ を / に変換しておく（予防措置）
                     existing_card.image_path = csv_image_path.replace('\\', '/')
                     
                 updated_count += 1
                 target_card = existing_card
             else:
-                # 存在しない場合は新規作成
                 new_card = models.DBBusinessCard(
                     id=card_id,
                     name=row.get("name", ""),
@@ -1020,9 +1014,13 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(databas
                 imported_count += 1
                 target_card = new_card
             
-            # タグのインポート処理
             if "tags" in row:
                 sync_tags(db, target_card, row.get("tags"))
+
+            batch_count += 1
+            if batch_count >= BATCH_SIZE:
+                db.commit()
+                batch_count = 0
                 
         db.commit()
         return {"message": f"Import complete. Added: {imported_count}, Updated: {updated_count}, Skipped: {skipped_count}"}
