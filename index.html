@@ -152,7 +152,7 @@
                   name: r.name || prev.name, company_name: r.company_name || prev.company_name,
                   department: r.department || prev.department, title: r.title || prev.title,
                   phone_number: r.phone_number || prev.phone_number, email: r.email || prev.email,
-                  address: r.address || prev.address, exchange_date: prev.exchange_date,
+                  address: r.address || prev.address, exchange_date: r.exchange_date || prev.exchange_date,
                   memo: r.memo ? (prev.memo ? prev.memo + '\n\n[自動抽出メモ]\n' + r.memo : r.memo) : prev.memo
                 };
               });
@@ -574,10 +574,6 @@
                 <input type="file" id="csvFileInput" accept=".csv" style={{ display: 'none' }} onChange={handleCsvFileChange} />
                 <Button variant="outlined" color="error" onClick={handleImportCsvClick} startIcon={<span className="material-icons">upload</span>}>
                   CSV読込
-                </Button>
-                <Button variant="outlined" color="secondary" onClick={handleManualImport} disabled={isImporting}
-                  startIcon={isImporting ? <CircularProgress size={20} color="inherit" /> : <span className="material-icons">sync</span>}>
-                  {isImporting ? '処理中...' : '手動インポート'}
                 </Button>
                 <Button variant="contained" color="primary" onClick={handleOpenCreateDialog}>
                   手動入力/確認登録
