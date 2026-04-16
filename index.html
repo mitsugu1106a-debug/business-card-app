@@ -219,7 +219,6 @@
         } catch (err) { showSnackbar('画像の送信に失敗しました', 'error'); }
         finally { setIsImporting(false); e.target.value = ''; }
       };
-
       /* ========== 保存 ========== */
       const handleSubmit = async function(e) {
         e.preventDefault();
@@ -229,6 +228,11 @@
         });
         submitData.append('tags', formTags.join(','));
         if (imageFile) submitData.append('image', imageFile);
+
+        // ダイアログを即座に閉じて体感速度を上げる
+        setOpenDialog(false);
+        showSnackbar('保存中...', 'info');
+
         try {
           if (editMode) {
             await axios.put(API_BASE_URL + editId, submitData, { headers: { 'Content-Type': 'multipart/form-data' } });
@@ -238,7 +242,6 @@
             showSnackbar('名刺を登録しました', 'success');
           }
           fetchCards(currentPage, debouncedSearch, perPage);
-          setOpenDialog(false);
         } catch (err) { showSnackbar('保存に失敗しました', 'error'); }
       };
 
