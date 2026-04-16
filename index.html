@@ -823,15 +823,10 @@
                     <Grid item xs={12} sm={6}><TextField fullWidth label="名刺交換日" type="date" name="exchange_date" value={formData.exchange_date || ''} onChange={handleInputChange} InputLabelProps={{ shrink: true }} /></Grid>
                     <Grid item xs={12} sm={6}>
                       <Autocomplete
-                        multiple freeSolo
+                        multiple freeSolo filterSelectedOptions
                         options={availableTags.map(function(t) { return t.name; })}
                         value={formTags}
-                        onChange={function(e, nv) { setFormTags(nv); }}
-                        renderTags={function(value, getTagProps) {
-                          return value.map(function(option, index) {
-                            return <Chip size="small" variant="outlined" color="primary" label={option} {...getTagProps({ index: index })} />;
-                          });
-                        }}
+                        onChange={function(event, newValue) { setFormTags(newValue); }}
                         renderInput={function(params) {
                           return <TextField {...params} label="タグ (自由に作成可能)" placeholder="タグ追加" />;
                         }}

@@ -240,12 +240,12 @@ def delete_image_file(image_path: str):
 def sync_tags(db: Session, db_card: models.DBBusinessCard, tags_str: str):
     if tags_str is None:
         return
-    tag_names = [t.strip() for t in tags_str.split(',') if t.strip()]
     
-    # 既存のタグの紐付けを解除
+    # 既存のタグの紐付けを解除（空文字の場合＝全タグ削除にも対応）
     db_card.tags.clear()
     
-    # 新しいタグを紐付け（存在しなければ作成）
+    # タグ名をパースして紐付け
+    tag_names = [t.strip() for t in tags_str.split(',') if t.strip()]
     for tn in set(tag_names):
         tag = db.query(models.Tag).filter(models.Tag.name == tn).first()
         if not tag:
@@ -490,7 +490,7 @@ def update_card(
     address: Optional[str] = Form(None),
     exchange_date: Optional[str] = Form(None),
     memo: Optional[str] = Form(None),
-    tags: Optional[str] = Form(None),
+    tags: Optional[str] = Form(""),
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(database.get_db)
 ):
