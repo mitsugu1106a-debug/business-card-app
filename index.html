@@ -80,6 +80,7 @@
       const [isDupScanning, setIsDupScanning] = useState(false);
       const [uploadingAttachment, setUploadingAttachment] = useState(false);
       const searchTimerRef = useRef(null);
+      const [tagInput, setTagInput] = useState('');
 
       /* ========== ユーティリティ ========== */
       const showSnackbar = (message, severity) => setSnackbar({ open: true, message, severity });
@@ -822,15 +823,59 @@
                     <Grid item xs={12}><TextField fullWidth label="住所" name="address" value={formData.address || ''} onChange={handleInputChange} /></Grid>
                     <Grid item xs={12} sm={6}><TextField fullWidth label="名刺交換日" type="date" name="exchange_date" value={formData.exchange_date || ''} onChange={handleInputChange} InputLabelProps={{ shrink: true }} /></Grid>
                     <Grid item xs={12} sm={6}>
-                      <Autocomplete
-                        multiple freeSolo filterSelectedOptions
-                        options={availableTags.map(function(t) { return t.name; })}
-                        value={formTags}
-                        onChange={function(event, newValue) { setFormTags(newValue); }}
-                        renderInput={function(params) {
-                          return <TextField {...params} label="タグ (自由に作成可能)" placeholder="タグ追加" />;
-                        }}
-                      />
+                      <Typography variant="subtitle2" color="textSecondary" sx={{ mb: 0.5 }}>タグ</Typography>
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1, minHeight: 32 }}>
+                        {formTags.map(function(tagName, idx) {
+                          return React.createElement(Chip, {
+                            key: tagName + '_' + idx,
+                            label: tagName,
+                            size: 'small',
+                            color: 'primary',
+                            variant: 'outlined',
+                            onDelete: function() {
+                              setFormTags(function(prev) {
+                                var next = [];
+                                for (var i = 0; i < prev.length; i++) {
+                                  if (i !== idx) next.push(prev[i]);
+                                }
+                                return next;
+                              });
+                            }
+                          });
+                        })}
+                      </Box>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <TextField
+                          size="small" fullWidth
+                          placeholder="タグ名を入力してEnter"
+                          value={tagInput}
+                          onChange={function(e) { setTagInput(e.target.value); }}
+                          onKeyDown={function(e) {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              var val = tagInput.trim();
+                              if (val && formTags.indexOf(val) === -1) {
+                                setFormTags(function(prev) { return prev.concat([val]); });
+                              }
+                              setTagInput('');
+                            }
+                          }}
+                          inputProps={{ list: 'tagSuggestions' }}
+                        />
+                        <Button variant="outlined" size="small" sx={{ whiteSpace: 'nowrap' }}
+                          onClick={function() {
+                            var val = tagInput.trim();
+                            if (val && formTags.indexOf(val) === -1) {
+                              setFormTags(function(prev) { return prev.concat([val]); });
+                            }
+                            setTagInput('');
+                          }}>追加</Button>
+                      </Box>
+                      <datalist id="tagSuggestions">
+                        {availableTags.map(function(t) {
+                          return React.createElement('option', { key: t.id, value: t.name });
+                        })}
+                      </datalist>
                     </Grid>
                     <Grid item xs={12}><TextField fullWidth label="メモ (現場名、保有資格、打ち合わせ内容など)" name="memo" value={formData.memo || ''} onChange={handleInputChange} multiline rows={4} /></Grid>
                   </Grid>
