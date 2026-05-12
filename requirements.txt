@@ -3,6 +3,7 @@ uvicorn
 sqlalchemy
 python-dotenv
 google-generativeai
+aiofiles
 python-multipart
 Pillow
 PyMuPDF==1.25.3
