@@ -344,14 +344,14 @@ async def analyze_business_card(image: UploadFile = File(...)):
         
         # 2026年現在の最強モデルから順に試行するフォールバックリスト
         models_to_try = [
-                  "gemini-3.1-flash-lite-preview",
+                    "gemini-2.5-flash",
                     "gemini-2.0-flash",
+                    "gemini-flash-lite-latest",
+                    "gemini-flash-latest",
                     "gemini-1.5-flash",
                     "gemini-1.5-pro",
                     "gemini-3.1-pro-preview",
-                    "gemini-2.5-pro",
-            
-        response = None
+        ]
         last_error = None
         selected_model_name = None
         
