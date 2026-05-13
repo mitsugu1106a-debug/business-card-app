@@ -1,15 +1,7 @@
 import os
 import time
 import shutil
-import uuid
-import json
-import threading
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-import PIL.Image
-import fitz # PyMuPDF
-import io
-import traceback
+import uuideback
 
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -25,26 +17,14 @@ if API_KEY and API_KEY != "YOUR_API_KEY_HERE":
         genai.configure(api_key=API_KEY)
     
 MODELS_TO_TRY = [
-        "gemini-3.1-flash-lite-preview",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-3.1-pro-preview",
-        "gemini-2.5-pro"
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-flash-lite-latest",
+            "gemini-flash-latest",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gemini-3.1-pro-preview",
 ]
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-AUTO_IMPORT_DIR = os.path.join(BASE_DIR, "auto_import")
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
-
-os.makedirs(AUTO_IMPORT_DIR, exist_ok=True)
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-# List of models for fallback pattern (有料プランになれば上位版を追加可能)
-MODELS_TO_TRY = [
-    "gemini-2.5-pro",
-    "gemini-2.5-flash"
-]
-
 def perform_ocr(image_path: str):
     if not API_KEY or API_KEY == "YOUR_API_KEY_HERE":
         print("Watcher: OCR skipped due to missing API KEY.")
