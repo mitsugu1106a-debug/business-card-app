@@ -1,7 +1,7 @@
 import os
 import time
 import shutil
-import uuideback
+import traceback
 
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -312,3 +312,8 @@ def process_all_pending():
             results["details"].append({"file": filename, "status": "failed", "reason": f"Process error: {e}"})
 
     return results
+
+
+if __name__ == "__main__":
+            start_watching()
+        
