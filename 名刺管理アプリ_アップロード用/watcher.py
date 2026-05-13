@@ -22,9 +22,16 @@ from sqlalchemy.orm import Session
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 if API_KEY and API_KEY != "YOUR_API_KEY_HERE":
-    genai.configure(api_key=API_KEY)
-
-# Configure directories
+        genai.configure(api_key=API_KEY)
+    
+MODELS_TO_TRY = [
+        "gemini-3.1-flash-lite-preview",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+        "gemini-3.1-pro-preview",
+        "gemini-2.5-pro"
+]
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 AUTO_IMPORT_DIR = os.path.join(BASE_DIR, "auto_import")
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
