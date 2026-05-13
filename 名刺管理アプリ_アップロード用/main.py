@@ -23,13 +23,7 @@ from contextlib import asynccontextmanager
 import watcher
 import re
 import csv
-            "gemini-3.1-flash-lite-preview",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
-            "gemini-3.1-pro-preview",
-            "gemini-2.5-pro"
-from supabase import create_client, Client
+            from supabase import create_client, Client
 
 # Supabase Initialization
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -334,14 +328,14 @@ async def analyze_business_card(image: UploadFile = File(...)):
         
         # フォールバックするモデルの優先順位リスト (有料プランになれば上位版を追加可能)
         models_to_try = [
-            "gemini-3.1-flash-lite-preview",
-                    "gemini-2.0-flash",
-                    "gemini-1.5-flash",
-                    "gemini-1.5-pro",
-                    "gemini-3.1-pro-preview",
-                    "gemini-2.5-pro"
+                                "gemini-2.5-flash",
+                                "gemini-2.0-flash",
+                                "gemini-flash-lite-latest",
+                                "gemini-flash-latest",
+                                "gemini-1.5-flash",
+                                "gemini-1.5-pro",
+                                "gemini-3.1-pro-preview",
         ]
-        
         response = None
         last_error = None
         selected_model_name = None
