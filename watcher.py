@@ -7,8 +7,11 @@ import threading
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import PIL.Image
-import pillow_heif
-pillow_heif.register_heif_opener()
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    print("Warning: pillow_heif is not installed. HEIC support is disabled.", flush=True)
 import fitz # PyMuPDF
 import io
 import traceback
