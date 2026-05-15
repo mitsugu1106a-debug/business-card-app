@@ -32,26 +32,16 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(AUTO_IMPORT_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# List of models for fallback pattern
+# List of models for fallback pattern (最強モデル順)
 MODELS_TO_TRY = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-flash-lite-latest",
-        "gemini-flash-latest",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-3.1-pro-preview",
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash"
 ]
-# Supabase Initialization (for cloud storage)
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase_client = None
-if SUPABASE_URL and SUPABASE_KEY:
-    try:
-        from supabase import create_client
-        supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    except Exception as e:
-        print(f"Watcher: Failed to initialize Supabase: {e}")
 
 def perform_ocr(image_path: str):
     if not API_KEY or API_KEY == "YOUR_API_KEY_HERE":
@@ -62,7 +52,10 @@ def perform_ocr(image_path: str):
     generation_config = {"temperature": 0.1, "response_mime_type": "application/json"}
     
     prompt = """
-    あなたは高精度な名刺読み取りAIです。入力された画像に【複数の名刺（例: 8枚など）】が写っている場合、それぞれの名刺ごとに完全に独立したデータとして抽出してください。
+    あなたは世界最高峰の名刺解析AIです。
+    画像がスマホのカメラで撮影されたもので、多少の歪み、影、反射、ピンぼけがあっても、文字として認識できるものはすべて執念深く読み取ってください。
+    
+    画像の中に複数の名刺が並んでいる場合は、それぞれを個別のデータとして抽出してください。
     【重要・厳守】:
     - ある名刺の「氏名」と、別の名刺の「住所」や「会社名」を絶対に混同したり、使い回したりしてはいけません。
     - 抽出する「address」は、必ずその「name」が記載されているのと同じ1枚の名刺枠内に書かれている住所のみを記載してください。
@@ -70,8 +63,8 @@ def perform_ocr(image_path: str):
     - 読み取れない項目や存在しない項目は null または空文字にしてください。
     [
       {
-        "name": "氏名",
-        "company_name": "会社名/法人名",
+        "name": "氏名（最優先で読み取ること）",
+        "company_name": "会社名/法人名（ロゴや文字から特定）",
         "department": "所属部署",
         "title": "役職",
         "phone_number": "電話番号 (固定電話と携帯電話の両方がある場合は「固定: 03-... / 携帯: 090-...」のように記載)",
@@ -80,6 +73,8 @@ def perform_ocr(image_path: str):
         "memo": "その他、WebサイトのURL、事業内容などを自由にまとめたテキスト"
       }
     ]
+    
+    ※もし文字が全く読み取れない場合でも、空のオブジェクトを返さず、可能な限りの断片を拾ってください。
     """
 
     try:
@@ -170,69 +165,68 @@ def process_file(src_path: str):
     if not ocr_results:
         ocr_results = [{}]
 
-    # Move/Upload image
+    # Move file to uploads
     new_filename = f"{uuid.uuid4()}{ext}"
-    final_image_path = None
-
-    # クラウドストレージ(Supabase)へのアップロード試行
-    if supabase_client:
-        try:
-            # PDFの場合は1ページ目をサムネイル化してアップロード
-            if ext == '.pdf':
-                try:
-                    doc = fitz.open(src_path)
-                    if len(doc) > 0:
-                        page = doc[0]
-                        pix = page.get_pixmap(matrix=fitz.Matrix(2,2))
-                        png_data = pix.tobytes("png")
-                        new_filename = new_filename.replace('.pdf', '.png')
-                        supabase_client.storage.from_("cards").upload(new_filename, png_data)
-                        final_image_path = supabase_client.storage.from_("cards").get_public_url(new_filename)
+    dest_path = os.path.join(UPLOAD_DIR, new_filename)
+    try:
+        shutil.move(src_path, dest_path)
+        
+        # PDFの場合はサムネイル(PNG)を生成してそちらをDBに登録する
+        if ext == '.pdf':
+            try:
+                doc = fitz.open(dest_path)
+                if len(doc) > 0:
+                    page = doc[0]
+                    mat = fitz.Matrix(2, 2)
+                    pix = page.get_pixmap(matrix=mat)
+                    png_filename = new_filename.replace('.pdf', '.png')
+                    png_dest_path = os.path.join(UPLOAD_DIR, png_filename)
+                    with open(png_dest_path, "wb") as f:
+                        f.write(pix.tobytes("png"))
                     doc.close()
-                except Exception as e:
-                    print(f"Watcher: PDF thumbnail generation failed: {e}")
-            else:
-                # 通常画像
-                with open(src_path, "rb") as f:
-                    supabase_client.storage.from_("cards").upload(new_filename, f.read())
-                final_image_path = supabase_client.storage.from_("cards").get_public_url(new_filename)
-            
-            # 処理済みローカルファイルを削除
-            if os.path.exists(src_path):
-                os.remove(src_path)
-            print(f"Watcher: Successfully uploaded {new_filename} to Supabase.")
-        except Exception as e:
-            print(f"Watcher: Supabase upload failed: {e}. Falling back to local storage.")
-
-    # クラウドアップロードに失敗した場合や設定がない場合、ローカルに保持（エフェメラル）
-    if not final_image_path:
-        dest_path = os.path.join(UPLOAD_DIR, new_filename)
-        try:
-            shutil.move(src_path, dest_path)
-            final_image_path = f"/uploads/{new_filename}"
-        except Exception as e:
-            print(f"Watcher: Failed to hold file locally: {e}")
-            return
+                    new_filename = png_filename
+            except Exception as e:
+                print(f"Watcher: Failed to generate PNG from PDF: {e}")
+                
+    except Exception as e:
+        print(f"Watcher: Failed to move file: {e}")
+        return
 
     # DB Registration
     db = database.SessionLocal()
     try:
+        registered_count = 0
         for idx, ocr_result in enumerate(ocr_results):
-            # 複数抽出された場合、画像は最初の一件のみ、それ以外は電子名刺
+            name = ocr_result.get("name")
+            company = ocr_result.get("company_name")
+            
+            # 名前も会社名もないものは登録しない（ゴミデータ防止）
+            if not name and not company:
+                print(f"Watcher: Skipping empty entry in {src_path}")
+                continue
+
+            # 複数抽出された場合、画像は最初の1件目のみに紐付け、2件目以降は画像なし（電子名刺扱い）とする
+            current_image_path = f"/uploads/{new_filename}" if idx == 0 else None
+            
             db_card = models.DBBusinessCard(
-                name=ocr_result.get("name"),
-                company_name=ocr_result.get("company_name"),
+                name=name,
+                company_name=company,
                 department=ocr_result.get("department"),
                 title=ocr_result.get("title"),
                 phone_number=ocr_result.get("phone_number"),
                 email=ocr_result.get("email"),
                 address=ocr_result.get("address"),
-                memo=ocr_result.get("memo") and f"[一括登録]\n{ocr_result.get('memo', '')}" or "[一括登録]",
-                image_path=final_image_path if idx == 0 else None
+                memo=ocr_result.get("memo") and f"[自動インポート]\n{ocr_result.get('memo', '')}" or "[自動インポート]",
+                image_path=current_image_path
             )
             db.add(db_card)
-        db.commit()
-        print(f"Watcher: Successfully registered {len(ocr_results)} card(s) in DB.")
+            registered_count += 1
+            
+        if registered_count > 0:
+            db.commit()
+            print(f"Watcher: Successfully registered {registered_count} card(s) from {new_filename}")
+        else:
+            print(f"Watcher: No valid card data found in {src_path}, skipping commit.")
     except Exception as e:
         db.rollback()
         print(f"Watcher: DB Error: {e}")
@@ -321,23 +315,38 @@ def process_all_pending():
             # DB Registration
             db = database.SessionLocal()
             try:
-                for ocr_result in ocr_results:
+                registered_count = 0
+                for idx, ocr_result in enumerate(ocr_results):
+                    name = ocr_result.get("name")
+                    company = ocr_result.get("company_name")
+                    
+                    if not name and not company:
+                        print(f"Watcher: Skipping empty entry manually in {src_path}")
+                        continue
+                        
                     db_card = models.DBBusinessCard(
-                        name=ocr_result.get("name"),
-                        company_name=ocr_result.get("company_name"),
+                        name=name,
+                        company_name=company,
                         department=ocr_result.get("department"),
                         title=ocr_result.get("title"),
                         phone_number=ocr_result.get("phone_number"),
                         email=ocr_result.get("email"),
                         address=ocr_result.get("address"),
                         memo=ocr_result.get("memo") and f"[手動インポート]\n{ocr_result.get('memo', '')}" or "[手動インポート]",
-                        image_path=f"/uploads/{new_filename}"
+                        image_path=f"/uploads/{new_filename}" if idx == 0 else None
                     )
                     db.add(db_card)
-                db.commit()
-                print(f"Watcher: Successfully registered {len(ocr_results)} card(s) from {new_filename}")
-                results["processed"] += len(ocr_results)
-                results["details"].append({"file": filename, "status": "success", "count": len(ocr_results)})
+                    registered_count += 1
+                    
+                if registered_count > 0:
+                    db.commit()
+                    print(f"Watcher: Successfully registered {registered_count} card(s) from {new_filename}")
+                    results["processed"] += registered_count
+                    results["details"].append({"file": filename, "status": "success", "count": registered_count})
+                else:
+                    print(f"Watcher: No valid card data found manually in {src_path}, skipping commit.")
+                    results["skipped"] += 1
+                    results["details"].append({"file": filename, "status": "skipped", "reason": "No valid data extracted"})
             except Exception as e:
                 db.rollback()
                 print(f"Watcher: DB Error: {e}")

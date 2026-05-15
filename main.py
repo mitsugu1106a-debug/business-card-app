@@ -1,4 +1,3 @@
-# VERSION: 2026-04-14-REPAIR-FINAL
 import base64
 import secrets
 from fastapi import FastAPI, Depends, HTTPException, Form, File, UploadFile, Body, Request, Response
@@ -21,12 +20,7 @@ import io
 import traceback
 import threading
 from contextlib import asynccontextmanager
-# watcher はローカル専用（クラウドでは不要）
-try:
-    import watcher
-    HAS_WATCHER = True
-except ImportError:
-    HAS_WATCHER = False
+import watcher
 import re
 import csv
 import zipfile
@@ -60,10 +54,9 @@ models.Base.metadata.create_all(bind=database.engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # アプリ起動時にフォルダ監視を別スレッドで開始（ローカルのみ）
-    if HAS_WATCHER:
-        watch_thread = threading.Thread(target=watcher.start_watching, daemon=True)
-        watch_thread.start()
+    # アプリ起動時にフォルダ監視を別スレッドで開始
+    watch_thread = threading.Thread(target=watcher.start_watching, daemon=True)
+    watch_thread.start()
     yield
     # シャットダウン時の処理はここに追加
 
@@ -240,12 +233,12 @@ def delete_image_file(image_path: str):
 def sync_tags(db: Session, db_card: models.DBBusinessCard, tags_str: str):
     if tags_str is None:
         return
+    tag_names = [t.strip() for t in tags_str.split(',') if t.strip()]
     
-    # 既存のタグの紐付けを解除（空文字の場合＝全タグ削除にも対応）
+    # 既存のタグの紐付けを解除
     db_card.tags.clear()
     
-    # タグ名をパースして紐付け
-    tag_names = [t.strip() for t in tags_str.split(',') if t.strip()]
+    # 新しいタグを紐付け（存在しなければ作成）
     for tn in set(tag_names):
         tag = db.query(models.Tag).filter(models.Tag.name == tn).first()
         if not tag:
@@ -319,39 +312,40 @@ async def analyze_business_card(image: UploadFile = File(...)):
         
         # プロンプト設定: JSONスキーマに沿った配列（リスト）形式での回答を強制
         prompt = """
-        あなたは高精度な名刺読み取りAIです。入力された名刺画像から、写っている全ての名刺の情報を抽出し、必ず指定したJSONの【配列（リスト）形式】でのみ出力してください。
-        読み取れない項目や存在しない項目は null または空文字にしてください。
-
-        【重要な追加指示】
-        - 名刺の表面にペンや鉛筆で手書きされた日付（例: 2025.3.15、R7.3.15、2025/03/15 など）がある場合、それは名刺交換日です。exchange_date に YYYY-MM-DD 形式で記載してください。
-        - 手書きで追記された電話番号や携帯番号も、印刷された番号と同様に読み取って phone_number に含めてください。
-        - 手書き文字と印刷文字の両方を正確に読み取ってください。
-
+        あなたは世界最高峰の名刺解析AIです。
+        画像がスマホのカメラで撮影されたもので、多少の歪み、影、反射、ピンぼけがあっても、文字として認識できるものはすべて執念深く読み取ってください。
+        
+        画像の中に複数の名刺が並んでいる場合は、それぞれを個別のデータとして抽出してください。
+        
+        出力は必ず以下のJSON配列（リスト）形式のみとしてください。
         [
           {
-            "name": "氏名",
-            "company_name": "会社名/法人名",
+            "name": "氏名（最優先で読み取ること）",
+            "company_name": "会社名/法人名（ロゴや文字から特定）",
             "department": "所属部署",
             "title": "役職",
-            "phone_number": "電話番号 (固定電話と携帯電話の両方がある場合は「固定: 03-... / 携帯: 090-...」のように記載。手書きの番号も含む)",
+            "phone_number": "電話番号 (固定電話と携帯電話の両方がある場合は「固定: 03-... / 携帯: 090-...」のように記載)",
             "email": "メールアドレス",
             "address": "住所（都道府県、市区町村、番地、建物名など）",
-            "exchange_date": "名刺交換日 (手書きの日付がある場合はYYYY-MM-DD形式で記載。なければ空文字)",
-            "memo": "その他、WebサイトのURL、事業内容、手書きのメモ書きなどを自由にまとめたテキスト"
+            "memo": "その他、WebサイトのURL、事業内容などを自由にまとめたテキスト"
           }
         ]
+        
+        ※もし文字が全く読み取れない場合でも、空のオブジェクトを返さず、可能な限りの断片を拾ってください。
         """
         
-        # 2026年現在の最強モデルから順に試行するフォールバックリスト
+        # フォールバックするモデルの優先順位リスト (最強モデル順)
         models_to_try = [
-                    "gemini-2.5-flash",
-                    "gemini-2.0-flash",
-                    "gemini-flash-lite-latest",
-                    "gemini-flash-latest",
-                    "gemini-1.5-flash",
-                    "gemini-1.5-pro",
-                    "gemini-3.1-pro-preview",
+            "gemini-3.1-pro-preview",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash"
         ]
+        
+        response = None
         last_error = None
         selected_model_name = None
         
@@ -427,6 +421,11 @@ def create_card(
     if image and image.filename:
         image_path = save_upload_file(image)
 
+    # バリデーション: 氏名も会社名も取れなかった場合は、意味のないデータなので登録しない
+    if not name and not company_name:
+        print("Registration skipped: Both name and company_name are empty.")
+        return {"message": "Skip: No significant data found"}
+
     db_card = models.DBBusinessCard(
         name=name,
         company_name=company_name,
@@ -437,6 +436,7 @@ def create_card(
         address=address,
         exchange_date=exchange_date,
         memo=memo,
+        image_path=image_path,
     )
     db.add(db_card)
     sync_tags(db, db_card, tags)
@@ -445,7 +445,7 @@ def create_card(
     return db_card
 
 @app.get("/cards/")
-def read_cards(page: int = 1, per_page: int = 500, search: str = "", db: Session = Depends(database.get_db)):
+def read_cards(page: int = 1, per_page: int = 50, search: str = "", db: Session = Depends(database.get_db)):
     query = db.query(models.DBBusinessCard)
 
     if search:
@@ -497,7 +497,7 @@ def update_card(
     address: Optional[str] = Form(None),
     exchange_date: Optional[str] = Form(None),
     memo: Optional[str] = Form(None),
-    tags: Optional[str] = Form(""),
+    tags: Optional[str] = Form(None),
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(database.get_db)
 ):
@@ -896,8 +896,6 @@ def generate_thunderbird_csv_response(card_ids: List[str], db: Session):
 
 @app.post("/manual-import/", response_model=dict)
 def manual_import(db: Session = Depends(database.get_db)):
-    if not HAS_WATCHER:
-        return {"message": "Manual import is not available on cloud.", "results": {}}
     results = watcher.process_all_pending()
     return {"message": f"Manual import completed.", "results": results}
 
@@ -959,7 +957,6 @@ def generate_csv_response(card_ids: List[str], db: Session):
         }
     )
 
-
 @app.post("/import-csv/")
 async def import_csv(file: UploadFile = File(...), db: Session = Depends(database.get_db)):
     if not file.filename.endswith('.csv'):
@@ -968,35 +965,33 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(databas
     try:
         content = await file.read()
         
+        # 文字コードの判定（Excel保存時のShift-JISや、BOM付きUTF-8への対応）
         text_content = ""
         try:
-            # 1. まずUTF-8 (BOM付き含む)
-            text_content = content.decode('utf-8-sig')
+            # まずUTF-8(BOM付き含む)でデコードを試みる
+            text_content = content.decode('utf-8-sig') # utf-8-sig is smart enough to remove BOM if present
         except UnicodeDecodeError:
-            try:
-                # 2. 失敗したら日本のWindowsで標準的なcp932 (Shift-JIS拡張)
-                text_content = content.decode('cp932')
-            except UnicodeDecodeError:
-                # 3. それでもダメなら、不明な文字を?に置き換えて強引に読み込む（エラーで止めない）
-                text_content = content.decode('cp932', errors='replace')
+            # 失敗したらShift-JISでデコードを試みる
+            text_content = content.decode('shift_jis')
             
         csv_reader = csv.DictReader(io.StringIO(text_content))
         
         imported_count = 0
         updated_count = 0
         skipped_count = 0
-        batch_count = 0
-        BATCH_SIZE = 50
         
         for row in csv_reader:
+            # 必須項目チェック (少なくともIDは必要)
             card_id = row.get("id")
             if not card_id:
                 skipped_count += 1
                 continue
                 
+            # 既存のレコードをチェック
             existing_card = db.query(models.DBBusinessCard).filter(models.DBBusinessCard.id == card_id).first()
             
             if existing_card:
+                # 存在する場合は内容を上書き(更新)する
                 existing_card.name = row.get("name", existing_card.name)
                 existing_card.company_name = row.get("company_name", existing_card.company_name)
                 existing_card.department = row.get("department", existing_card.department)
@@ -1007,13 +1002,16 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(databas
                 existing_card.exchange_date = row.get("exchange_date", existing_card.exchange_date)
                 existing_card.memo = row.get("memo", existing_card.memo)
                 
+                # 画像パスは空でなければ上書きする
                 csv_image_path = row.get("image_path")
                 if csv_image_path:
+                    # CSVからインポートする際に \ を / に変換しておく（予防措置）
                     existing_card.image_path = csv_image_path.replace('\\', '/')
                     
                 updated_count += 1
                 target_card = existing_card
             else:
+                # 存在しない場合は新規作成
                 new_card = models.DBBusinessCard(
                     id=card_id,
                     name=row.get("name", ""),
@@ -1031,13 +1029,9 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(databas
                 imported_count += 1
                 target_card = new_card
             
+            # タグのインポート処理
             if "tags" in row:
                 sync_tags(db, target_card, row.get("tags"))
-
-            batch_count += 1
-            if batch_count >= BATCH_SIZE:
-                db.commit()
-                batch_count = 0
                 
         db.commit()
         return {"message": f"Import complete. Added: {imported_count}, Updated: {updated_count}, Skipped: {skipped_count}"}
