@@ -90,10 +90,16 @@ def perform_ocr(image_path: str):
             page = pdf_document[0]
             zoom_matrix = fitz.Matrix(2, 2)
             pix = page.get_pixmap(matrix=zoom_matrix)
-            pil_image = PIL.Image.open(io.BytesIO(pix.tobytes("png")))
+            image_part = {"mime_type": "image/png", "data": pix.tobytes("png")}
             pdf_document.close()
         else:
-            pil_image = PIL.Image.open(io.BytesIO(file_data))
+            ext = os.path.splitext(image_path)[1].lower()
+            mime_type = "image/jpeg"
+            if ext in [".png"]: mime_type = "image/png"
+            elif ext in [".webp"]: mime_type = "image/webp"
+            elif ext in [".heic", ".heif"]: mime_type = "image/heic"
+            
+            image_part = {"mime_type": mime_type, "data": file_data}
     except Exception as e:
         print(f"Watcher: Invalid image file {image_path}: {e}")
         return None
@@ -103,7 +109,7 @@ def perform_ocr(image_path: str):
         try:
             print(f"--- [watcher.py] Trying OCR model: {model_name} ---", flush=True)
             model = genai.GenerativeModel(model_name=model_name, generation_config=generation_config)
-            response = model.generate_content([prompt, pil_image])
+            response = model.generate_content([prompt, image_part])
             print(f"[watcher.py] OCR Success using model: {model_name}", flush=True)
             print(f"[watcher.py] Raw Response:\n{response.text}\n", flush=True)
             break
