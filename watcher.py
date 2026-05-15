@@ -7,6 +7,8 @@ import threading
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import PIL.Image
+import pillow_heif
+pillow_heif.register_heif_opener()
 import fitz # PyMuPDF
 import io
 import traceback
@@ -90,16 +92,14 @@ def perform_ocr(image_path: str):
             page = pdf_document[0]
             zoom_matrix = fitz.Matrix(2, 2)
             pix = page.get_pixmap(matrix=zoom_matrix)
-            image_part = {"mime_type": "image/png", "data": pix.tobytes("png")}
+            pil_image = PIL.Image.open(io.BytesIO(pix.tobytes("png")))
             pdf_document.close()
         else:
-            ext = os.path.splitext(image_path)[1].lower()
-            mime_type = "image/jpeg"
-            if ext in [".png"]: mime_type = "image/png"
-            elif ext in [".webp"]: mime_type = "image/webp"
-            elif ext in [".heic", ".heif"]: mime_type = "image/heic"
-            
-            image_part = {"mime_type": mime_type, "data": file_data}
+            pil_image = PIL.Image.open(io.BytesIO(file_data))
+            # Geminiに渡すため、RGBモードに変換（HEIC等で必要な場合）
+            if pil_image.mode in ("RGBA", "P", "CMYK"):
+                pil_image = pil_image.convert("RGB")
+                
     except Exception as e:
         print(f"Watcher: Invalid image file {image_path}: {e}")
         return None
@@ -109,7 +109,7 @@ def perform_ocr(image_path: str):
         try:
             print(f"--- [watcher.py] Trying OCR model: {model_name} ---", flush=True)
             model = genai.GenerativeModel(model_name=model_name, generation_config=generation_config)
-            response = model.generate_content([prompt, image_part])
+            response = model.generate_content([prompt, pil_image])
             print(f"[watcher.py] OCR Success using model: {model_name}", flush=True)
             print(f"[watcher.py] Raw Response:\n{response.text}\n", flush=True)
             break
