@@ -140,7 +140,7 @@ def perform_ocr(image_path: str):
 
 def process_file(src_path: str):
     ext = os.path.splitext(src_path)[1].lower()
-    if ext not in ['.jpg', '.jpeg', '.png', '.webp', '.pdf']:
+    if ext not in ['.jpg', '.jpeg', '.png', '.webp', '.pdf', '.heic', '.heif']:
         print(f"Watcher: Skipping non-image file {src_path}")
         return
 
@@ -200,10 +200,17 @@ def process_file(src_path: str):
             name = ocr_result.get("name")
             company = ocr_result.get("company_name")
             
-            # 名前も会社名もないものは登録しない（ゴミデータ防止）
+            # 名前も会社名もない場合
             if not name and not company:
-                print(f"Watcher: Skipping empty entry in {src_path}")
-                continue
+                if idx == 0:
+                    # 1件目（画像本体）の場合は、写真を残すために「OCR失敗」として登録する
+                    name = "OCR解析失敗 (要手動入力)"
+                    company = ""
+                    ocr_result["memo"] = "文字が読み取れませんでした。画像を確認して手動で入力してください。"
+                else:
+                    # 2件目以降（PDFの余分な白紙ページなど）は無視する（ゴミデータ防止）
+                    print(f"Watcher: Skipping empty extra entry in {src_path}")
+                    continue
 
             # 複数抽出された場合、画像は最初の1件目のみに紐付け、2件目以降は画像なし（電子名刺扱い）とする
             current_image_path = f"/uploads/{new_filename}" if idx == 0 else None
@@ -321,8 +328,13 @@ def process_all_pending():
                     company = ocr_result.get("company_name")
                     
                     if not name and not company:
-                        print(f"Watcher: Skipping empty entry manually in {src_path}")
-                        continue
+                        if idx == 0:
+                            name = "OCR解析失敗 (要手動入力)"
+                            company = ""
+                            ocr_result["memo"] = "文字が読み取れませんでした。手動で入力してください。"
+                        else:
+                            print(f"Watcher: Skipping empty extra entry manually in {src_path}")
+                            continue
                         
                     db_card = models.DBBusinessCard(
                         name=name,
