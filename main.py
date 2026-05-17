@@ -16,6 +16,7 @@ import json
 import google.generativeai as genai
 from dotenv import load_dotenv
 import PIL.Image
+from PIL import ImageOps
 import fitz  # PyMuPDF
 import io
 import traceback
@@ -313,6 +314,10 @@ async def analyze_business_card(image: UploadFile = File(...)):
         else:
             # 通常の画像
             pil_image = PIL.Image.open(io.BytesIO(file_data))
+            try:
+                pil_image = ImageOps.exif_transpose(pil_image)
+            except Exception as e:
+                print(f"[main.py] EXIF transpose error: {e}", flush=True)
 
         # プロンプト設定: JSONスキーマに沿った配列（リスト）形式での回答を強制
         prompt = """

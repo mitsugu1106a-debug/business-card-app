@@ -7,6 +7,7 @@ import threading
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import PIL.Image
+from PIL import ImageOps
 import fitz # PyMuPDF
 import io
 import traceback
@@ -98,6 +99,10 @@ def perform_ocr(image_path: str):
             pdf_document.close()
         else:
             pil_image = PIL.Image.open(io.BytesIO(file_data))
+            try:
+                pil_image = ImageOps.exif_transpose(pil_image)
+            except Exception as e:
+                print(f"Watcher: EXIF transpose error: {e}", flush=True)
     except Exception as e:
         print(f"Watcher: Invalid image file {image_path}: {e}")
         return None
