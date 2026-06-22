@@ -86,65 +86,6 @@
       const showSnackbar = (message, severity) => setSnackbar({ open: true, message, severity });
       const handleCloseSnackbar = () => setSnackbar(function(prev){ return Object.assign({}, prev, { open: false }); });
 
-      const compressImage = function(file, maxWidth, maxHeight, quality) {
-        return new Promise(function(resolve, reject) {
-          if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-            resolve(file);
-            return;
-          }
-
-          var reader = new FileReader();
-          reader.readAsDataURL(file);
-          reader.onload = function(event) {
-            var img = new Image();
-            img.src = event.target.result;
-            img.onload = function() {
-              var width = img.width;
-              var height = img.height;
-
-              if (width > height) {
-                if (width > maxWidth) {
-                  height = Math.round((height * maxWidth) / width);
-                  width = maxWidth;
-                }
-              } else {
-                if (height > maxHeight) {
-                  width = Math.round((width * maxHeight) / height);
-                  height = maxHeight;
-                }
-              }
-
-              var canvas = document.createElement('canvas');
-              canvas.width = width;
-              canvas.height = height;
-
-              var ctx = canvas.getContext('2d');
-              ctx.drawImage(img, 0, 0, width, height);
-
-              canvas.toBlob(
-                function(blob) {
-                  if (blob) {
-                    var newFileName = file.name.replace(/\.[^/.]+$/, "") + "_compressed.jpg";
-                    var compressedFile = new File([blob], newFileName, { type: 'image/jpeg', lastModified: Date.now() });
-                    resolve(compressedFile);
-                  } else {
-                    resolve(file);
-                  }
-                },
-                'image/jpeg',
-                quality
-              );
-            };
-            img.onerror = function() {
-              resolve(file);
-            };
-          };
-          reader.onerror = function() {
-            resolve(file);
-          };
-        });
-      };
-
       /* ========== データ取得 ========== */
       const fetchCards = async (page, search, pp) => {
         try {
@@ -192,15 +133,11 @@
       const handleFileChange = async function(e) {
         if (e.target.files && e.target.files[0]) {
           var file = e.target.files[0];
+          setImageFile(file);
+          var ocrData = new FormData();
+          ocrData.append('image', file);
           setIsAnalyzing(true);
           try {
-            console.log("元ファイルサイズ (MB):", (file.size / (1024 * 1024)).toFixed(2) + " MB");
-            var compressedFile = await compressImage(file, 1600, 1600, 0.8);
-            console.log("圧縮後ファイルサイズ (MB):", (compressedFile.size / (1024 * 1024)).toFixed(2) + " MB");
-            setImageFile(compressedFile);
-            
-            var ocrData = new FormData();
-            ocrData.append('image', compressedFile);
             var res = await axios.post(SERVER_BASE_URL + '/ocr/', ocrData, { headers: { 'Content-Type': 'multipart/form-data' } });
             var results = res.data.cards || [];
             if (results.length > 1) {
@@ -274,27 +211,13 @@
         var files = e.target.files;
         if (!files || files.length === 0) return;
         setIsImporting(true);
+        var fd = new FormData();
+        Array.from(files).forEach(function(f) { fd.append('images', f); });
         try {
-          var fd = new FormData();
-          var filesArray = Array.from(files);
-          console.log("一括アップロード ファイル件数:", filesArray.length);
-          
-          var compressedFiles = await Promise.all(filesArray.map(function(f) {
-            return compressImage(f, 1600, 1600, 0.8);
-          }));
-
-          compressedFiles.forEach(function(cf) {
-            fd.append('images', cf);
-          });
-
           await axios.post(SERVER_BASE_URL + '/upload-async/', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
           showSnackbar('送信完了！AIが裏側で順次登録します。', 'success');
-        } catch (err) { 
-          showSnackbar('画像の送信に失敗しました', 'error'); 
-        } finally { 
-          setIsImporting(false); 
-          e.target.value = ''; 
-        }
+        } catch (err) { showSnackbar('画像の送信に失敗しました', 'error'); }
+        finally { setIsImporting(false); e.target.value = ''; }
       };
       /* ========== 保存 ========== */
       const handleSubmit = async function(e) {
@@ -889,6 +812,13 @@
                         画像を選択
                       </Button>
                       {imageFile && <Typography variant="caption" sx={{ ml: 2 }}>{imageFile.name}</Typography>}
+                      
+                      {/* --- 追加：原本画像がある場合は編集画面で表示する --- */}
+                      {editMode && formData.image_path && (
+                        <Box mt={2} mb={1} display="flex" justifyContent="center">
+                          <img src={`${SERVER_BASE_URL}${formData.image_path}`} alt="原本画像" style={{ maxWidth: '100%', maxHeight: '300px', objectFit: 'contain', border: '1px solid #ddd', borderRadius: '4px' }} />
+                        </Box>
+                      )}
                     </Grid>
                     <Grid item xs={12} sm={6}><TextField fullWidth label="氏名" name="name" value={formData.name || ''} onChange={handleInputChange} /></Grid>
                     <Grid item xs={12} sm={6}><TextField fullWidth label="会社名" name="company_name" value={formData.company_name || ''} onChange={handleInputChange} /></Grid>
@@ -987,6 +917,12 @@
                     <Box display="flex" justifyContent="center" mb={3}>
                       <VirtualCardComponent card={viewerCard} size="large" />
                     </Box>
+                    {/* --- 追加：原本画像がある場合はビューアでも表示する --- */}
+                    {viewerCard.image_path && (
+                      <Box display="flex" justifyContent="center" mb={3}>
+                        <img src={`${SERVER_BASE_URL}${viewerCard.image_path}`} alt="原本画像" style={{ maxWidth: '100%', maxHeight: '400px', objectFit: 'contain', border: '1px solid #ccc', borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
+                      </Box>
+                    )}
                     <Box sx={{ maxWidth: 360, mx: 'auto', bgcolor: 'background.paper', borderRadius: 2, boxShadow: 1, p: 2 }}>
                       {[
                         { icon: 'location_on', value: viewerCard.address, label: '住所' },
