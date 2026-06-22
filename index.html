@@ -812,13 +812,6 @@
                         画像を選択
                       </Button>
                       {imageFile && <Typography variant="caption" sx={{ ml: 2 }}>{imageFile.name}</Typography>}
-                      
-                      {/* --- 追加：原本画像がある場合は編集画面で表示する --- */}
-                      {editMode && formData.image_path && (
-                        <Box mt={2} mb={1} display="flex" justifyContent="center">
-                          <img src={`${SERVER_BASE_URL}${formData.image_path}`} alt="原本画像" style={{ maxWidth: '100%', maxHeight: '300px', objectFit: 'contain', border: '1px solid #ddd', borderRadius: '4px' }} />
-                        </Box>
-                      )}
                     </Grid>
                     <Grid item xs={12} sm={6}><TextField fullWidth label="氏名" name="name" value={formData.name || ''} onChange={handleInputChange} /></Grid>
                     <Grid item xs={12} sm={6}><TextField fullWidth label="会社名" name="company_name" value={formData.company_name || ''} onChange={handleInputChange} /></Grid>
@@ -917,12 +910,6 @@
                     <Box display="flex" justifyContent="center" mb={3}>
                       <VirtualCardComponent card={viewerCard} size="large" />
                     </Box>
-                    {/* --- 追加：原本画像がある場合はビューアでも表示する --- */}
-                    {viewerCard.image_path && (
-                      <Box display="flex" justifyContent="center" mb={3}>
-                        <img src={`${SERVER_BASE_URL}${viewerCard.image_path}`} alt="原本画像" style={{ maxWidth: '100%', maxHeight: '400px', objectFit: 'contain', border: '1px solid #ccc', borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
-                      </Box>
-                    )}
                     <Box sx={{ maxWidth: 360, mx: 'auto', bgcolor: 'background.paper', borderRadius: 2, boxShadow: 1, p: 2 }}>
                       {[
                         { icon: 'location_on', value: viewerCard.address, label: '住所' },
