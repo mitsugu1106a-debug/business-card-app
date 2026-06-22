@@ -11,3 +11,4 @@ psycopg2-binary==2.9.10
 grpcio
 grpcio-status
 watchdog
+protobuf<6.0.0
