@@ -593,7 +593,10 @@
                   CSV読込
                 </Button>
                 <Button variant="contained" color="primary" onClick={handleOpenCreateDialog}>
-                  手動入力/確認登録
+                  手動入力/名刺登録
+                </Button>
+                <Button variant="outlined" color="warning" onClick={function(){window.open(SERVER_BASE_URL + '/api/logs/', '_blank')}} startIcon={<span className="material-icons">receipt_long</span>}>
+                  システムログ
                 </Button>
               </Box>
             </Box>

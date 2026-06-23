@@ -35,6 +35,25 @@ import zipfile
 from fastapi.responses import StreamingResponse
 from supabase import create_client, Client
 
+import sys
+
+class LoggerWriter:
+    def __init__(self, stream, filename):
+        self.stream = stream
+        self.log = open(filename, "a", encoding="utf-8")
+
+    def write(self, message):
+        self.stream.write(message)
+        self.log.write(message)
+        self.log.flush()
+
+    def flush(self):
+        self.stream.flush()
+        self.log.flush()
+
+sys.stdout = LoggerWriter(sys.stdout, "app.log")
+sys.stderr = LoggerWriter(sys.stderr, "app.log")
+
 # Supabase Initialization
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -1093,6 +1112,18 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(databas
         traceback.print_exc()
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to process CSV file: {str(e)}")
+
+@app.get("/api/logs/")
+def get_logs(lines: int = 500):
+    log_file = "app.log"
+    if not os.path.exists(log_file):
+        return StreamingResponse(iter(["No logs found."]), media_type="text/plain")
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            all_lines = f.readlines()
+        return StreamingResponse(iter(all_lines[-lines:]), media_type="text/plain")
+    except Exception as e:
+        return StreamingResponse(iter([f"Failed to read logs: {str(e)}"]), media_type="text/plain")
 
 @app.get("/export-backup/")
 def export_backup():

@@ -136,7 +136,9 @@ def process_file(src_path: str):
 
     print(f"Watcher: Processing -> {src_path}")
     ocr_results = perform_ocr(src_path)
-    if not ocr_results: return
+    if not ocr_results:
+        print(f"Watcher: OCR completely failed for {src_path}. Registering as blank card to allow manual entry.")
+        ocr_results = [{}]
 
     new_filename = f"{uuid.uuid4()}{ext}"
     final_image_path = None
