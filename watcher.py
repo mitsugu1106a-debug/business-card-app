@@ -7,7 +7,13 @@ import threading
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import PIL.Image
-from PIL import ImageOps
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    print("Warning: pillow_heif is not installed. HEIC support is disabled.", flush=True)
 import fitz # PyMuPDF
 import io
 import traceback
@@ -22,6 +28,18 @@ from sqlalchemy.orm import Session
 # Load env limits
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
+
+# List of models for fallback pattern (最強モデル順)
+MODELS_TO_TRY = [
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash"
+]
+
 if API_KEY and API_KEY != "YOUR_API_KEY_HERE":
     genai.configure(api_key=API_KEY)
 
@@ -33,16 +51,7 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(AUTO_IMPORT_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# List of models for fallback pattern
-MODELS_TO_TRY = [
-    "gemini-3.1-pro-preview",
-    "gemini-2.5-pro",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-2.0-flash",
-    "gemini-1.5-pro",
-    "gemini-1.5-flash"
-]
-
+# Supabase Initialization (for cloud storage)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase_client = None
@@ -58,201 +67,141 @@ def perform_ocr(image_path: str):
         print("Watcher: OCR skipped due to missing API KEY.")
         return None
 
-    genai.configure(api_key=API_KEY)
     generation_config = {"temperature": 0.1, "response_mime_type": "application/json"}
-
+    
     prompt = """
-    あなたは高精度な名刺読み取りAIです。入力された画像に【複数の名刺（例: 8枚など）】が写っている場合、それぞれの名刺ごとに完全に独立したデータとして抽出してください。
-    【重要・厳守】:
-    - ある名刺の「氏名」と、別の名刺の「住所」や「会社名」を絶対に混同したり、使い回したりしてはいけません。
-    - 抽出する「address」は、必ずその「name」が記載されているのと同じ1枚の名刺枠内に書かれている住所のみを記載してください。
-    - 指定したJSONの【配列（リスト）形式】でのみ出力してください。
-    - 読み取れない項目や存在しない項目は null または空文字にしてください。
+    あなたは世界最高峰の名刺解析AIです。
+    画像がスマホのカメラで撮影されたもので、多少の歪み、影、反射、ピンぼけがあっても、文字として認識できるものはすべて執念深く読み取ってください。
+    
+    画像の中に複数の名刺が並んでいる場合は、それぞれを個別のデータとして抽出してください。
+    
+    出力は必ず以下のJSON配列（リスト）形式のみとしてください。
     [
       {
-        "name": "氏名",
-        "company_name": "会社名/法人名",
+        "name": "氏名（最優先で読み取ること）",
+        "company_name": "会社名/法人名（ロゴや文字から特定）",
         "department": "所属部署",
         "title": "役職",
-        "phone_number": "電話番号 (固定電話と携帯電話の両方がある場合は「固定: 03-... / 携帯: 090-...」のように記載)",
+        "phone_number": "電話番号",
         "email": "メールアドレス",
-        "address": "住所（都道府県、市区町村、番地、建物名など）",
-        "memo": "その他、WebサイトのURL、事業内容などを自由にまとめたテキスト"
+        "address": "住所",
+        "memo": "その他、URLやSNSアカウントなどがあればメモに記載"
       }
     ]
+    
+    ※もし文字が全く読み取れない場合でも、空のオブジェクトを返さず、可能な限りの断片を拾ってください。
     """
 
     try:
-        # Load image/pdf into memory and close file handle immediately
         with open(image_path, "rb") as f:
             file_data = f.read()
-
         if image_path.lower().endswith(".pdf"):
             pdf_document = fitz.open(stream=file_data, filetype="pdf")
-            if len(pdf_document) == 0:
-                print(f"Watcher: Empty PDF {image_path}")
-                return None
+            if len(pdf_document) == 0: return None
             page = pdf_document[0]
-            zoom_matrix = fitz.Matrix(2, 2)
-            pix = page.get_pixmap(matrix=zoom_matrix)
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
             pil_image = PIL.Image.open(io.BytesIO(pix.tobytes("png")))
             pdf_document.close()
         else:
             pil_image = PIL.Image.open(io.BytesIO(file_data))
-            try:
-                pil_image = ImageOps.exif_transpose(pil_image)
-            except Exception as e:
-                print(f"Watcher: EXIF transpose error: {e}", flush=True)
+            if pil_image.mode in ("RGBA", "P", "CMYK"):
+                pil_image = pil_image.convert("RGB")
     except Exception as e:
         print(f"Watcher: Invalid image file {image_path}: {e}")
         return None
 
-    response = None
     for model_name in MODELS_TO_TRY:
         try:
             print(f"--- [watcher.py] Trying OCR model: {model_name} ---", flush=True)
             model = genai.GenerativeModel(model_name=model_name, generation_config=generation_config)
             response = model.generate_content([prompt, pil_image])
-            print(f"[watcher.py] OCR Success using model: {model_name}", flush=True)
-            print(f"[watcher.py] Raw Response:\n{response.text}\n", flush=True)
-            break
-        except Exception as e:
-            print(f"[watcher.py] Fallback warning: Model {model_name} failed. Error: {type(e).__name__} - {e}", flush=True)
-            pass # Fallback to next
-
-    if response:
-        try:
+            
             cleaned_text = response.text.strip()
-            if cleaned_text.startswith("```json"):
-                cleaned_text = cleaned_text[7:]
-            if cleaned_text.startswith("```"):
-                cleaned_text = cleaned_text[3:]
-            if cleaned_text.endswith("```"):
-                cleaned_text = cleaned_text[:-3]
+            if cleaned_text.startswith("```json"): cleaned_text = cleaned_text[7:]
+            if cleaned_text.startswith("```"): cleaned_text = cleaned_text[3:]
+            if cleaned_text.endswith("```"): cleaned_text = cleaned_text[:-3]
             parsed_data = json.loads(cleaned_text.strip())
-
-            if isinstance(parsed_data, dict):
-                parsed_data = [parsed_data]
-            elif not isinstance(parsed_data, list):
-                parsed_data = []
-
+            
+            if isinstance(parsed_data, dict): parsed_data = [parsed_data]
             return parsed_data
         except Exception as e:
-            print(f"========== [watcher.py] JSON Parsing Error ==========", flush=True)
-            print(f"Problematic Text: {response.text}", flush=True)
-            traceback.print_exc()
-            print("=====================================================", flush=True)
-            return None
-    else:
-        print("[watcher.py] FATAL: All configured models failed.", flush=True)
+            print(f"Watcher: Fallback warning: Model {model_name} failed. Error: {e}")
+            continue
     return None
 
 def process_file(src_path: str):
     ext = os.path.splitext(src_path)[1].lower()
-    if ext not in ['.jpg', '.jpeg', '.png', '.webp', '.pdf']:
-        print(f"Watcher: Skipping non-image file {src_path}")
+    if ext not in ['.jpg', '.jpeg', '.png', '.webp', '.pdf', '.heic', '.heif']:
         return
 
-    print(f"Watcher: Processing new file -> {src_path}")
-
-    # Wait for file to be completely written (basic polling lock-check)
-    file_stable = False
-    for _ in range(10):
-        try:
-            with open(src_path, 'ab'):
-                file_stable = True
-                break
-        except IOError:
-            time.sleep(1)
-
-    if not file_stable:
-        print(f"Watcher: File {src_path} is locked by another process.")
-        return
-
-    # OCR process
+    print(f"Watcher: Processing -> {src_path}")
     ocr_results = perform_ocr(src_path)
-    if not ocr_results:
-        ocr_results = [{}]
+    if not ocr_results: return
 
-    # Move/Upload image
     new_filename = f"{uuid.uuid4()}{ext}"
     final_image_path = None
 
-    # クラウドストレージ(Supabase)へのアップロード試行
     if supabase_client:
         try:
-            # PDFの場合は1ページ目をサムネイル化してアップロード
-            if ext == '.pdf':
-                try:
-                    doc = fitz.open(src_path)
-                    if len(doc) > 0:
-                        page = doc[0]
-                        pix = page.get_pixmap(matrix=fitz.Matrix(2,2))
-                        png_data = pix.tobytes("png")
-                        new_filename = new_filename.replace('.pdf', '.png')
-                        supabase_client.storage.from_("cards").upload(new_filename, png_data)
-                        final_image_path = supabase_client.storage.from_("cards").get_public_url(new_filename)
-                    doc.close()
-                except Exception as e:
-                    print(f"Watcher: PDF thumbnail generation failed: {e}")
-            else:
-                # 通常画像
-                with open(src_path, "rb") as f:
-                    supabase_client.storage.from_("cards").upload(new_filename, f.read())
-                final_image_path = supabase_client.storage.from_("cards").get_public_url(new_filename)
-
-            # 処理済みローカルファイルを削除
-            if os.path.exists(src_path):
-                os.remove(src_path)
-            print(f"Watcher: Successfully uploaded {new_filename} to Supabase.")
+            with open(src_path, "rb") as f:
+                supabase_client.storage.from_("cards").upload(new_filename, f.read())
+            final_image_path = supabase_client.storage.from_("cards").get_public_url(new_filename)
         except Exception as e:
-            print(f"Watcher: Supabase upload failed: {e}. Falling back to local storage.")
+            print(f"Watcher: Supabase upload failed: {e}")
 
-    # クラウドアップロードに失敗した場合や設定がない場合、ローカルに保持（エフェメラル）
     if not final_image_path:
         dest_path = os.path.join(UPLOAD_DIR, new_filename)
-        try:
-            shutil.move(src_path, dest_path)
-            final_image_path = f"/uploads/{new_filename}"
-        except Exception as e:
-            print(f"Watcher: Failed to hold file locally: {e}")
-            return
+        shutil.move(src_path, dest_path)
+        final_image_path = f"/uploads/{new_filename}"
 
-    # DB Registration
     db = database.SessionLocal()
     try:
+        registered_count = 0
         for idx, ocr_result in enumerate(ocr_results):
-            # 複数抽出された場合、画像は最初の一件のみ、それ以外は電子名刺
+            name = ocr_result.get("name")
+            company = ocr_result.get("company_name")
+            
+            # 名前も会社名もない場合
+            if not name and not company:
+                if idx == 0:
+                    # 1件目（画像本体）の場合は、写真を残すために「OCR失敗」として登録する
+                    name = "OCR解析失敗 (要手動入力)"
+                    company = ""
+                    ocr_result["memo"] = "文字が読み取れませんでした。画像を確認して手動で入力してください。"
+                else:
+                    # 2件目以降（PDFの余分な白紙ページなど）は無視する（ゴミデータ防止）
+                    print(f"Watcher: Skipping empty extra entry in {src_path}")
+                    continue
+
             db_card = models.DBBusinessCard(
-                name=ocr_result.get("name"),
-                company_name=ocr_result.get("company_name"),
+                name=name,
+                company_name=company,
                 department=ocr_result.get("department"),
                 title=ocr_result.get("title"),
                 phone_number=ocr_result.get("phone_number"),
                 email=ocr_result.get("email"),
                 address=ocr_result.get("address"),
-                memo=ocr_result.get("memo") and f"[一括登録]\n{ocr_result.get('memo', '')}" or "[一括登録]",
-                image_path=final_image_path if idx == 0 else None
+                memo=f"[自動登録] {ocr_result.get('memo', '')}",
+                image_path=final_image_path
             )
             db.add(db_card)
-        db.commit()
-        print(f"Watcher: Successfully registered {len(ocr_results)} card(s) in DB.")
+            registered_count += 1
+            
+        if registered_count > 0:
+            db.commit()
+            print(f"Watcher: Successfully registered {registered_count} card(s).")
+        else:
+            print(f"Watcher: No valid card data found in {src_path}, skipping commit.")
     except Exception as e:
         db.rollback()
         print(f"Watcher: DB Error: {e}")
     finally:
         db.close()
 
-
 class BusinessCardHandler(FileSystemEventHandler):
     def on_created(self, event):
         if not event.is_directory:
-            # Run in a separate thread to avoid blocking the observer
             threading.Thread(target=process_file, args=(event.src_path,)).start()
-
-    def on_moved(self, event):
-        if not event.is_directory:
-            threading.Thread(target=process_file, args=(event.dest_path,)).start()
 
 def start_watching():
     event_handler = BusinessCardHandler()
@@ -260,102 +209,11 @@ def start_watching():
     observer.schedule(event_handler, AUTO_IMPORT_DIR, recursive=False)
     observer.start()
     print(f"Watcher: Started monitoring directory '{AUTO_IMPORT_DIR}'")
-
-    # Keep the thread running
     try:
-        while True:
-            time.sleep(1)
+        while True: time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
     observer.join()
 
-def process_all_pending():
-    """auto_importフォルダ内の全画像ファイルを手動で一括処理する"""
-    results = {
-        "processed": 0,
-        "failed": 0,
-        "skipped": 0,
-        "details": []
-    }
-
-    if not os.path.exists(AUTO_IMPORT_DIR):
-        print(f"Watcher: Directory {AUTO_IMPORT_DIR} does not exist.")
-        return results
-
-    for filename in os.listdir(AUTO_IMPORT_DIR):
-        src_path = os.path.join(AUTO_IMPORT_DIR, filename)
-        if not os.path.isfile(src_path):
-            continue
-
-        ext = os.path.splitext(src_path)[1].lower()
-        if ext not in ['.jpg', '.jpeg', '.png', '.webp', '.pdf']:
-            print(f"Watcher: Skipping non-image/pdf file {src_path}")
-            results["skipped"] += 1
-            results["details"].append({"file": filename, "status": "skipped", "reason": "Not an image or pdf"})
-            continue
-
-        print(f"Watcher: Manually processing file -> {src_path}")
-        try:
-            # check file lock
-            file_stable = False
-            for _ in range(5):
-                try:
-                    with open(src_path, 'ab'):
-                        file_stable = True
-                        break
-                except IOError:
-                    time.sleep(0.5)
-
-            if not file_stable:
-                print(f"Watcher: File {src_path} is locked by another process.")
-                results["failed"] += 1
-                results["details"].append({"file": filename, "status": "failed", "reason": "File locked"})
-                continue
-
-            # OCR process
-            ocr_results = perform_ocr(src_path)
-            if not ocr_results:
-                ocr_results = [{}]
-
-            # Move file to uploads
-            new_filename = f"{uuid.uuid4()}{ext}"
-            dest_path = os.path.join(UPLOAD_DIR, new_filename)
-            shutil.move(src_path, dest_path)
-
-            # DB Registration
-            db = database.SessionLocal()
-            try:
-                for ocr_result in ocr_results:
-                    db_card = models.DBBusinessCard(
-                        name=ocr_result.get("name"),
-                        company_name=ocr_result.get("company_name"),
-                        department=ocr_result.get("department"),
-                        title=ocr_result.get("title"),
-                        phone_number=ocr_result.get("phone_number"),
-                        email=ocr_result.get("email"),
-                        address=ocr_result.get("address"),
-                        memo=ocr_result.get("memo") and f"[手動インポート]\n{ocr_result.get('memo', '')}" or "[手動インポート]",
-                        image_path=f"/uploads/{new_filename}"
-                    )
-                    db.add(db_card)
-                db.commit()
-                print(f"Watcher: Successfully registered {len(ocr_results)} card(s) from {new_filename}")
-                results["processed"] += len(ocr_results)
-                results["details"].append({"file": filename, "status": "success", "count": len(ocr_results)})
-            except Exception as e:
-                db.rollback()
-                print(f"Watcher: DB Error: {e}")
-                results["failed"] += 1
-                results["details"].append({"file": filename, "status": "failed", "reason": f"DB Error: {e}"})
-
-                # Undo move on failure? For now, leave it in uploads for safety (already moved).
-            finally:
-                db.close()
-
-        except Exception as e:
-            print(f"Watcher: Critical error processing file {src_path}: {e}")
-            traceback.print_exc()
-            results["failed"] += 1
-            results["details"].append({"file": filename, "status": "failed", "reason": f"Process error: {e}"})
-
-    return results
+if __name__ == "__main__":
+    start_watching()

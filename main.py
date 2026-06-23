@@ -16,6 +16,8 @@ import json
 import google.generativeai as genai
 from dotenv import load_dotenv
 import PIL.Image
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 import fitz  # PyMuPDF
 import io
 import traceback
