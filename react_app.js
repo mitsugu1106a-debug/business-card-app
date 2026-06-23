@@ -1,24 +1,4 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="initial-scale=1, width=device-width" />
-  <title>名刺管理アプリ</title>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons" />
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/@mui/material@5/umd/material-ui.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.1/dist/browser-image-compression.js"></script>
-  <style>
-    body { margin: 0; background-color: #f4f7f6; }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
-  <script type="text/babel">
+
     const {
       ThemeProvider, createTheme, CssBaseline,
       Container, Typography, Box, Paper, TextField, Button, Grid,
@@ -125,6 +105,19 @@
         }, 400);
       };
 
+      /* ========== 画像圧縮ヘルパー ========== */
+      const compressFile = async function(file) {
+        if (!window.imageCompression) return file;
+        try {
+          var options = { maxSizeMB: 0.5, maxWidthOrHeight: 1600, useWebWorker: true };
+          var compressedBlob = await window.imageCompression(file, options);
+          return new File([compressedBlob], file.name, { type: compressedBlob.type, lastModified: Date.now() });
+        } catch (e) {
+          console.error('Compression failed', e);
+          return file;
+        }
+      };
+
       /* ========== フォーム操作 ========== */
       const handleInputChange = function(e) {
         var n = e.target.name, v = e.target.value;
@@ -133,12 +126,12 @@
 
       const handleFileChange = async function(e) {
         if (e.target.files && e.target.files[0]) {
-          var file = e.target.files[0];
-          setImageFile(file);
-          var ocrData = new FormData();
-          ocrData.append('image', file);
           setIsAnalyzing(true);
           try {
+            var file = await compressFile(e.target.files[0]);
+            setImageFile(file);
+            var ocrData = new FormData();
+            ocrData.append('image', file);
             var res = await axios.post(SERVER_BASE_URL + '/ocr/', ocrData, { headers: { 'Content-Type': 'multipart/form-data' } });
             var results = res.data.cards || [];
             if (results.length > 1) {
@@ -213,8 +206,11 @@
         if (!files || files.length === 0) return;
         setIsImporting(true);
         var fd = new FormData();
-        Array.from(files).forEach(function(f) { fd.append('images', f); });
         try {
+          for (var i = 0; i < files.length; i++) {
+            var compressedFile = await compressFile(files[i]);
+            fd.append('images', compressedFile);
+          }
           await axios.post(SERVER_BASE_URL + '/upload-async/', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
           showSnackbar('送信完了！AIが裏側で順次登録します。', 'success');
         } catch (err) { showSnackbar('画像の送信に失敗しました', 'error'); }
@@ -813,13 +809,6 @@
                         画像を選択
                       </Button>
                       {imageFile && <Typography variant="caption" sx={{ ml: 2 }}>{imageFile.name}</Typography>}
-                      
-                      {/* --- 追加：原本画像がある場合は編集画面で表示する --- */}
-                      {editMode && formData.image_path && (
-                        <Box mt={2} mb={1} display="flex" justifyContent="center">
-                          <img src={`${SERVER_BASE_URL}${formData.image_path}`} alt="原本画像" style={{ maxWidth: '100%', maxHeight: '300px', objectFit: 'contain', border: '1px solid #ddd', borderRadius: '4px' }} />
-                        </Box>
-                      )}
                     </Grid>
                     <Grid item xs={12} sm={6}><TextField fullWidth label="氏名" name="name" value={formData.name || ''} onChange={handleInputChange} /></Grid>
                     <Grid item xs={12} sm={6}><TextField fullWidth label="会社名" name="company_name" value={formData.company_name || ''} onChange={handleInputChange} /></Grid>
@@ -918,12 +907,6 @@
                     <Box display="flex" justifyContent="center" mb={3}>
                       <VirtualCardComponent card={viewerCard} size="large" />
                     </Box>
-                    {/* --- 追加：原本画像がある場合はビューアでも表示する --- */}
-                    {viewerCard.image_path && (
-                      <Box display="flex" justifyContent="center" mb={3}>
-                        <img src={`${SERVER_BASE_URL}${viewerCard.image_path}`} alt="原本画像" style={{ maxWidth: '100%', maxHeight: '400px', objectFit: 'contain', border: '1px solid #ccc', borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
-                      </Box>
-                    )}
                     <Box sx={{ maxWidth: 360, mx: 'auto', bgcolor: 'background.paper', borderRadius: 2, boxShadow: 1, p: 2 }}>
                       {[
                         { icon: 'location_on', value: viewerCard.address, label: '住所' },
@@ -1124,6 +1107,4 @@
     };
 
     ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
-  </script>
-</body>
-</html>
+  
