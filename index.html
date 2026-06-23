@@ -125,6 +125,19 @@
         }, 400);
       };
 
+      /* ========== 画像圧縮ヘルパー ========== */
+      const compressFile = async function(file) {
+        if (!window.imageCompression) return file;
+        try {
+          var options = { maxSizeMB: 0.5, maxWidthOrHeight: 1600, useWebWorker: true };
+          var compressedBlob = await window.imageCompression(file, options);
+          return new File([compressedBlob], file.name, { type: compressedBlob.type, lastModified: Date.now() });
+        } catch (e) {
+          console.error('Compression failed', e);
+          return file;
+        }
+      };
+
       /* ========== フォーム操作 ========== */
       const handleInputChange = function(e) {
         var n = e.target.name, v = e.target.value;
@@ -133,12 +146,12 @@
 
       const handleFileChange = async function(e) {
         if (e.target.files && e.target.files[0]) {
-          var file = e.target.files[0];
-          setImageFile(file);
-          var ocrData = new FormData();
-          ocrData.append('image', file);
           setIsAnalyzing(true);
           try {
+            var file = await compressFile(e.target.files[0]);
+            setImageFile(file);
+            var ocrData = new FormData();
+            ocrData.append('image', file);
             var res = await axios.post(SERVER_BASE_URL + '/ocr/', ocrData, { headers: { 'Content-Type': 'multipart/form-data' } });
             var results = res.data.cards || [];
             if (results.length > 1) {
@@ -213,8 +226,11 @@
         if (!files || files.length === 0) return;
         setIsImporting(true);
         var fd = new FormData();
-        Array.from(files).forEach(function(f) { fd.append('images', f); });
         try {
+          for (var i = 0; i < files.length; i++) {
+            var compressedFile = await compressFile(files[i]);
+            fd.append('images', compressedFile);
+          }
           await axios.post(SERVER_BASE_URL + '/upload-async/', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
           showSnackbar('送信完了！AIが裏側で順次登録します。', 'success');
         } catch (err) { showSnackbar('画像の送信に失敗しました', 'error'); }
